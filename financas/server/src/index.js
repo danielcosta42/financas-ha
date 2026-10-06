@@ -5,10 +5,10 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync, existsSync, mkdirSync, readdirSync, renameSync, statSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { abrirBanco, transacao } from './db.js';
+import { abrirBanco, transacao, semearPessoas } from './db.js';
 import { decodificar, ehOfx, lerOfx, detectarDelimitador, lerCsvBruto, sugerirPerfil, aplicarPerfil, PRESETS } from './parsers.js';
 import { importar, registrarCarteira, aplicarRegrasSemCategoria, resumo } from './servico.js';
-import { escutarEvento, publicarResumo, haDisponivel } from './ha.js';
+import { escutarEvento, publicarResumo, haDisponivel, listarNotificadores } from './ha.js';
 
 const DEV = Boolean(process.env.FINANCAS_DEV);
 const DADOS = process.env.FINANCAS_DATA || '/data';
@@ -16,10 +16,11 @@ const opcoes = (() => {
   try { return JSON.parse(readFileSync(join(DADOS, 'options.json'), 'utf8')); } catch { return {}; }
 })();
 const PESSOAS = opcoes.pessoas?.length ? opcoes.pessoas : ['Daniel', 'Naomi'];
-const DONOS = [...PESSOAS, 'Casa', 'Ferion'];
 const PASTA = opcoes.pasta_de_entrada || null;
 
 const db = abrirBanco(DADOS);
+semearPessoas(db, PESSOAS);
+const donos = () => db.prepare("SELECT nome FROM pessoas WHERE arquivada = 0 ORDER BY CASE tipo WHEN 'pessoa' THEN 0 WHEN 'casa' THEN 1 ELSE 2 END, id").all().map(p => p.nome);
 const app = Fastify({ logger: { level: DEV ? 'info' : 'warn' }, bodyLimit: 2 * 1024 * 1024 });
 await app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024, files: 1 } });
 
@@ -57,7 +58,55 @@ const uploads = new Map(); // token → { arq, criado }
 setInterval(() => { for (const [k, v] of uploads) if (Date.now() - v.criado > 30 * 6e4) uploads.delete(k); }, 6e4).unref();
 
 // ---------- API ----------
-app.get('/api/estado', async () => ({ pessoas: PESSOAS, donos: DONOS, ha: haDisponivel(), presets: PRESETS.map(p => ({ id: p.id, nome: p.nome })), pasta: PASTA }));
+app.get('/api/estado', async () => ({ pessoas: donos(), donos: donos(), ha: haDisponivel(), presets: PRESETS.map(p => ({ id: p.id, nome: p.nome })), pasta: PASTA }));
+
+
+// ---------- perfis ----------
+app.get('/api/notificadores', async () => listarNotificadores());
+const CAMPOS_PESSOA = ['nome', 'tipo', 'cor', 'renda_mensal', 'dia_recebimento', 'regime', 'meta_poupanca', 'notificar', 'arquivada'];
+app.get('/api/pessoas', async req => {
+  const mes = req.query?.mes || mesAtual();
+  const ini = `${mes}-01`;
+  return db.prepare(`SELECT p.*,
+      (SELECT COUNT(*) FROM contas c WHERE c.dono = p.nome AND c.arquivada = 0) AS contas,
+      (SELECT COALESCE(SUM(-l.valor),0) FROM lancamentos l JOIN contas c ON c.id = l.conta_id LEFT JOIN categorias k ON k.id = l.categoria_id
+         WHERE c.dono = p.nome AND l.valor < 0 AND COALESCE(k.fora_do_total,0) = 0 AND l.data >= ? AND l.data < date(?, '+1 month')) AS saidas_mes,
+      (SELECT COALESCE(SUM(l.valor),0) FROM lancamentos l JOIN contas c ON c.id = l.conta_id LEFT JOIN categorias k ON k.id = l.categoria_id
+         WHERE c.dono = p.nome AND l.valor > 0 AND COALESCE(k.fora_do_total,0) = 0 AND l.data >= ? AND l.data < date(?, '+1 month')) AS entradas_mes
+    FROM pessoas p ORDER BY p.arquivada, CASE p.tipo WHEN 'pessoa' THEN 0 WHEN 'casa' THEN 1 ELSE 2 END, p.id`).all(ini, ini, ini, ini);
+});
+app.post('/api/pessoas', async (req, reply) => {
+  const b = req.body || {};
+  if (!b.nome?.trim()) return reply.code(400).send({ erro: 'nome obrigatório' });
+  try {
+    const r = db.prepare(`INSERT INTO pessoas (nome, tipo, cor, renda_mensal, dia_recebimento, regime, meta_poupanca, notificar) VALUES (?,?,?,?,?,?,?,?)`)
+      .run(b.nome.trim(), b.tipo || 'pessoa', b.cor || '#7fb2ff', b.renda_mensal ?? null, b.dia_recebimento ?? null, b.regime || null, b.meta_poupanca ?? null, b.notificar || null);
+    return { id: Number(r.lastInsertRowid) };
+  } catch { return reply.code(400).send({ erro: 'já existe um perfil com esse nome' }); }
+});
+app.patch('/api/pessoas/:id', async (req, reply) => {
+  const p = db.prepare('SELECT * FROM pessoas WHERE id = ?').get(req.params.id);
+  if (!p) return reply.code(404).send({ erro: 'perfil não encontrado' });
+  const b = req.body || {};
+  const novo = Object.fromEntries(CAMPOS_PESSOA.map(k => [k, b[k] === undefined ? p[k] : b[k] === '' ? null : b[k]]));
+  if (!novo.nome?.trim()) return reply.code(400).send({ erro: 'nome obrigatório' });
+  try {
+    transacao(db, () => {
+      db.prepare(`UPDATE pessoas SET ${CAMPOS_PESSOA.map(k => `${k} = ?`).join(', ')} WHERE id = ?`).run(...CAMPOS_PESSOA.map(k => novo[k]), p.id);
+      if (novo.nome !== p.nome) db.prepare('UPDATE contas SET dono = ? WHERE dono = ?').run(novo.nome, p.nome);
+    });
+  } catch { return reply.code(400).send({ erro: 'já existe um perfil com esse nome' }); }
+  atualizarHa();
+  return { ok: true };
+});
+app.delete('/api/pessoas/:id', async (req, reply) => {
+  const p = db.prepare('SELECT * FROM pessoas WHERE id = ?').get(req.params.id);
+  if (!p) return { ok: true };
+  const n = db.prepare('SELECT COUNT(*) AS n FROM contas WHERE dono = ?').get(p.nome).n;
+  if (n) return reply.code(400).send({ erro: `${p.nome} tem ${n} conta(s); arquive o perfil ou mova as contas antes` });
+  db.prepare('DELETE FROM pessoas WHERE id = ?').run(p.id);
+  return { ok: true };
+});
 
 app.get('/api/contas', async () => db.prepare(`SELECT c.*, (SELECT MAX(criado_em) FROM importacoes i WHERE i.conta_id = c.id) AS ultima_importacao,
   (SELECT COUNT(*) FROM lancamentos l WHERE l.conta_id = c.id) AS lancamentos FROM contas c ORDER BY c.arquivada, c.dono, c.nome`).all()
@@ -65,7 +114,7 @@ app.get('/api/contas', async () => db.prepare(`SELECT c.*, (SELECT MAX(criado_em
 
 app.post('/api/contas', async (req, reply) => {
   const { nome, tipo = 'corrente', dono, banco } = req.body || {};
-  if (!nome || !DONOS.includes(dono)) return reply.code(400).send({ erro: 'nome e dono são obrigatórios' });
+  if (!nome || !donos().includes(dono)) return reply.code(400).send({ erro: 'nome e dono são obrigatórios' });
   const r = db.prepare('INSERT INTO contas (nome, tipo, dono, banco) VALUES (?,?,?,?)').run(nome.trim(), tipo, dono, banco || null);
   return { id: Number(r.lastInsertRowid) };
 });

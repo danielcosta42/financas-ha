@@ -1,1 +1,1 @@
-{"root":["./src/App.tsx","./src/api.ts","./src/main.tsx","./src/ui.tsx","./src/telas/Categorias.tsx","./src/telas/Contas.tsx","./src/telas/Importar.tsx","./src/telas/Lancamentos.tsx","./src/telas/Resumo.tsx"],"version":"5.7.3"}
+{"root":["./src/App.tsx","./src/api.ts","./src/main.tsx","./src/ui.tsx","./src/telas/Categorias.tsx","./src/telas/Contas.tsx","./src/telas/Importar.tsx","./src/telas/Lancamentos.tsx","./src/telas/Pessoas.tsx","./src/telas/Resumo.tsx"],"version":"5.7.3"}

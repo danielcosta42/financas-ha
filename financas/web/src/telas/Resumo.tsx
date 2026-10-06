@@ -51,7 +51,7 @@ export function Resumo({ ctx }: { ctx: Ctx }) {
       <section className="stats">
         <Stat rotulo="Saídas" valor={brl(saidas)} tom="rosa" sub={r.carteiraPendente.n ? `inclui ${brl(r.carteiraPendente.total)} da Carteira ainda sem extrato` : `${r.n} lançamentos`} />
         <Stat rotulo="Entradas" valor={brl(r.entradas)} tom="ciano" />
-        <Stat rotulo="Resultado" valor={brl(r.entradas - saidas)} tom={r.entradas - saidas >= 0 ? 'ciano' : 'vermelho'} />
+        <Stat rotulo="Resultado" valor={brl(r.entradas - saidas)} tom={r.entradas - saidas >= 0 ? 'ciano' : 'vermelho'} sub={r.rendaDeclarada ? `renda declarada ${brl(r.rendaDeclarada)} · gastou ${Math.round((saidas / r.rendaDeclarada) * 100)}%` : undefined} />
         <button className={`stat clicavel ${r.semCategoria ? 'amarelo' : ''}`} onClick={() => ctx.ir('lancamentos', { categoria: 'sem' })}>
           <div className="stat-l">Sem categoria</div>
           <div className="stat-v mono">{r.semCategoria}</div>
@@ -78,9 +78,17 @@ export function Resumo({ ctx }: { ctx: Ctx }) {
 
         <div className="coluna">
           <section className="card">
-            <div className="sh"><h2>Por dono</h2></div>
+            <div className="sh"><h2>Por dono</h2><button className="m link" onClick={() => ctx.ir('pessoas')}>perfis</button></div>
             <ul className="linhas">
-              {r.porDono.map(d => <li key={d.dono}><span>{d.dono}</span><span className="mono">{brl(d.total)}</span></li>)}
+              {r.porDono.map(d => (
+                <li key={d.dono}>
+                  <span><span className="ponto" style={{ background: d.cor || '#8089a7' }} />{d.dono}</span>
+                  <span className="lin-dir">
+                    {d.renda_mensal ? <span className="mudo pequeno">{Math.round((d.total / d.renda_mensal) * 100)}% da renda</span> : null}
+                    <span className="mono">{brl(d.total)}</span>
+                  </span>
+                </li>
+              ))}
               {r.porDono.length === 0 && <li className="mudo">—</li>}
             </ul>
           </section>

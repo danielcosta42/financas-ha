@@ -26,6 +26,10 @@ export interface Perfil {
   colData: number; colDescricao: number; colValor: number; colDebito: number; colCredito: number; colId: number;
   formatoData: string; decimal: string; inverterSinal: boolean;
 }
+export interface Pessoa {
+  id: number; nome: string; tipo: 'pessoa' | 'casa' | 'empresa'; cor: string | null; renda_mensal: number | null; dia_recebimento: number | null;
+  regime: string | null; meta_poupanca: number | null; notificar: string | null; arquivada: number; contas: number; saidas_mes: number; entradas_mes: number;
+}
 export interface Conta { id: number; nome: string; tipo: 'corrente' | 'cartao' | 'outro'; dono: Dono; banco: string | null; arquivada: number; ultima_importacao: string | null; lancamentos: number; perfil: Perfil | null }
 export interface Categoria { id: number; nome: string; grupo: string | null; cor: string | null; fora_do_total: number; usos: number }
 export interface Regra { id: number; padrao: string; categoria_id: number; categoria: string; cor: string }
@@ -39,7 +43,8 @@ export interface Importacao { id: number; conta: string; dono: string; arquivo: 
 export interface Resumo {
   mes: string; saidas: number; entradas: number; n: number; semCategoria: number;
   porCategoria: { categoria: string; cor: string | null; categoria_id: number | null; total: number; n: number }[];
-  porDono: { dono: string; total: number }[];
+  porDono: { dono: string; total: number; cor: string | null; renda_mensal: number | null; tipo: string | null }[];
+  rendaDeclarada: number;
   carteiraPendente: { n: number; total: number };
   contas: { id: number; nome: string; dono: string; tipo: string; banco: string | null; ultima_importacao: string | null; ultimo_lancamento: string | null }[];
 }

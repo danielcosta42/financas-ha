@@ -5,9 +5,10 @@ import { Importar } from './telas/Importar';
 import { Lancamentos } from './telas/Lancamentos';
 import { Contas } from './telas/Contas';
 import { Categorias } from './telas/Categorias';
+import { Pessoas } from './telas/Pessoas';
 import { Icone } from './ui';
 
-export type Aba = 'resumo' | 'importar' | 'lancamentos' | 'contas' | 'categorias';
+export type Aba = 'resumo' | 'importar' | 'lancamentos' | 'contas' | 'pessoas' | 'categorias';
 export interface Ctx {
   estado: Estado; contas: Conta[]; categorias: Categoria[];
   recarregar: () => Promise<void>; ir: (a: Aba, filtro?: Record<string, string>) => void; filtro: Record<string, string>;
@@ -18,6 +19,7 @@ const ABAS: { id: Aba; nome: string; icone: string }[] = [
   { id: 'importar', nome: 'Importar', icone: 'upload' },
   { id: 'lancamentos', nome: 'Lançamentos', icone: 'lista' },
   { id: 'contas', nome: 'Contas', icone: 'carteira' },
+  { id: 'pessoas', nome: 'Pessoas', icone: 'pessoa' },
   { id: 'categorias', nome: 'Categorias', icone: 'etiqueta' },
 ];
 
@@ -58,6 +60,7 @@ export function App() {
         {aba === 'importar' && <Importar ctx={ctx} />}
         {aba === 'lancamentos' && <Lancamentos ctx={ctx} />}
         {aba === 'contas' && <Contas ctx={ctx} />}
+        {aba === 'pessoas' && <Pessoas ctx={ctx} />}
         {aba === 'categorias' && <Categorias ctx={ctx} />}
       </main>
     </div>

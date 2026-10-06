@@ -40,6 +40,19 @@ export function abrirBanco(dir) {
   const db = new DatabaseSync(join(dir, 'financas.sqlite'));
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
   db.exec(`
+    CREATE TABLE IF NOT EXISTS pessoas (
+      id INTEGER PRIMARY KEY,
+      nome TEXT NOT NULL UNIQUE,
+      tipo TEXT NOT NULL DEFAULT 'pessoa' CHECK (tipo IN ('pessoa','casa','empresa')),
+      cor TEXT,
+      renda_mensal REAL,
+      dia_recebimento INTEGER,
+      regime TEXT,
+      meta_poupanca REAL,
+      notificar TEXT,
+      arquivada INTEGER NOT NULL DEFAULT 0,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
     CREATE TABLE IF NOT EXISTS contas (
       id INTEGER PRIMARY KEY,
       nome TEXT NOT NULL,
@@ -110,6 +123,21 @@ export function abrirBanco(dir) {
     for (const [p, c] of REGRAS_PADRAO) insR.run(p, idDe.get(c).id);
   }
   return db;
+}
+
+const CORES = ['#7fb2ff', '#ff4fd8', '#4ff0c9', '#ffb86b', '#b18cff', '#ffe38a'];
+const NOTIFICAR_PADRAO = { Daniel: 'mobile_app_iphone_de_daniel', Naomi: 'mobile_app_naomi' };
+
+// Garante os perfis: os nomes das opções do add-on, Casa e Ferion, e qualquer dono de conta antigo.
+export function semearPessoas(db, nomes) {
+  const ins = db.prepare('INSERT OR IGNORE INTO pessoas (nome, tipo, cor, notificar) VALUES (?,?,?,?)');
+  const vazia = db.prepare('SELECT COUNT(*) AS n FROM pessoas').get().n === 0;
+  if (vazia) {
+    nomes.forEach((n, i) => ins.run(n, 'pessoa', CORES[i % CORES.length], NOTIFICAR_PADRAO[n] || null));
+    ins.run('Casa', 'casa', '#4ff0c9', null);
+    ins.run('Ferion', 'empresa', '#ffb86b', null);
+  }
+  for (const { dono } of db.prepare('SELECT DISTINCT dono FROM contas').all()) ins.run(dono, 'pessoa', '#8089a7', null);
 }
 
 export function transacao(db, fn) {

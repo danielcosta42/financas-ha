@@ -65,3 +65,13 @@ export async function publicarResumo(r, log) {
     contas_atrasadas: atrasadas,
   }, log);
 }
+
+export async function listarNotificadores() {
+  if (!TOKEN) return [];
+  try {
+    const r = await fetch(`${API}/services`, { headers: { Authorization: `Bearer ${TOKEN}` } });
+    const doms = await r.json();
+    const notify = doms.find(d => d.domain === 'notify');
+    return Object.keys(notify?.services || {}).filter(s => s.startsWith('mobile_app_')).sort();
+  } catch { return []; }
+}

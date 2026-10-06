@@ -76,7 +76,9 @@ export function resumo(db, mes) {
       COUNT(*) AS n ${base}`).get(ini, fim);
   const porCategoria = db.prepare(`SELECT COALESCE(k.nome, 'Sem categoria') AS categoria, k.cor, k.id AS categoria_id,
       SUM(-l.valor) AS total, COUNT(*) AS n ${base} AND l.valor < 0 GROUP BY k.id ORDER BY total DESC`).all(ini, fim);
-  const porDono = db.prepare(`SELECT c.dono, SUM(-l.valor) AS total ${base} AND l.valor < 0 GROUP BY c.dono ORDER BY total DESC`).all(ini, fim);
+  const porDono = db.prepare(`SELECT c.dono, SUM(-l.valor) AS total, p.cor, p.renda_mensal, p.tipo ${base.replace('LEFT JOIN categorias k', 'LEFT JOIN pessoas p ON p.nome = c.dono LEFT JOIN categorias k')}
+      AND l.valor < 0 GROUP BY c.dono ORDER BY total DESC`).all(ini, fim);
+  const renda = db.prepare("SELECT COALESCE(SUM(renda_mensal),0) AS r FROM pessoas WHERE arquivada = 0 AND tipo = 'pessoa'").get().r;
   const semCategoria = db.prepare('SELECT COUNT(*) AS n FROM lancamentos WHERE categoria_id IS NULL').get().n;
   const carteira = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(valor),0) AS total FROM carteira
       WHERE lancamento_id IS NULL AND substr(quando,1,10) >= ? AND substr(quando,1,10) < ?`).get(ini, fim);
@@ -84,5 +86,5 @@ export function resumo(db, mes) {
       (SELECT MAX(criado_em) FROM importacoes i WHERE i.conta_id = c.id) AS ultima_importacao,
       (SELECT MAX(data) FROM lancamentos x WHERE x.conta_id = c.id) AS ultimo_lancamento
       FROM contas c WHERE c.arquivada = 0 ORDER BY c.dono, c.nome`).all();
-  return { mes, ...tot, porCategoria, porDono, semCategoria, carteiraPendente: carteira, contas };
+  return { mes, ...tot, rendaDeclarada: renda, porCategoria, porDono, semCategoria, carteiraPendente: carteira, contas };
 }

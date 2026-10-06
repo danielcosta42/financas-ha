@@ -160,3 +160,23 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--ciano); }
   .lanc .c-cat { grid-area: cat; justify-self: end; }
   .lanc td[colspan] { grid-column: 1 / -1; padding: 16px 0; }
 }
+
+/* perfis */
+.perfis { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+.perfis .card { margin: 0; }
+.perfil { display: flex; flex-direction: column; gap: 14px; border-top: 2px solid var(--pc); }
+.perfil.apagada { opacity: .5; }
+.perfil-cab { display: flex; align-items: center; gap: 12px; }
+.avatar { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; font-weight: 700; font-size: 16px; border: 1px solid; flex: none; }
+.perfil-nome { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.perfil-nome b { font-size: 15px; }
+.perfil-num { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.perfil-num > div { display: flex; flex-direction: column; gap: 2px; }
+.perfil-num b { font-size: 18px; font-weight: 600; }
+.perfil-barra { height: 8px; border-radius: 4px; background: var(--s3); overflow: hidden; }
+.perfil-barra i { display: block; height: 100%; border-radius: 4px; transition: width .3s; }
+.perfil p { margin: -6px 0 0; }
+.perfil-pe { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border-top: 1px solid var(--b1); padding-top: 12px; }
+.perfil-pe .mudo { display: inline-flex; align-items: center; gap: 4px; }
+.ponto { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; vertical-align: 1px; }
+.link { background: none; border: 0; cursor: pointer; color: var(--azul); font-size: 12px; padding: 0; }
