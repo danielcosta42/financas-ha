@@ -35,11 +35,16 @@ export function escutarEvento(tipo, aoReceber, log) {
         try { aoReceber(m.event.data); } catch (e) { log?.error({ err: e.message }, 'erro ao tratar evento'); }
       }
     });
-    ws.addEventListener('close', () => {
+    // Um erro de conexão dispara error e depois close; fechar dentro do error gerava recursão infinita.
+    let encerrado = false;
+    const religar = () => {
+      if (encerrado) return;
+      encerrado = true;
       const espera = Math.min(60000, 2000 * 2 ** tentativa++);
       setTimeout(conectar, espera);
-    });
-    ws.addEventListener('error', () => ws.close());
+    };
+    ws.addEventListener('close', religar);
+    ws.addEventListener('error', () => { if (ws.readyState === WebSocket.OPEN) ws.close(); else religar(); });
   };
   conectar();
 }
@@ -51,12 +56,14 @@ export async function publicarResumo(r, log) {
   await publicarEstado('sensor.financas_saidas_do_mes', (r.saidas + r.carteiraPendente.total).toFixed(2), {
     ...brl, friendly_name: 'Finanças · saídas do mês', mes: r.mes, por_categoria: cats, por_dono: donos,
     carteira_pendente: r.carteiraPendente.total, extratos: r.saidas,
+    comentario: r.comentario?.texto || null,
+    recorrentes: (r.recorrentes || []).map(x => `${x.descricao} · R$ ${x.valor.toFixed(2).replace('.', ',')} x${x.vezes}`),
   }, log);
   await publicarEstado('sensor.financas_entradas_do_mes', r.entradas.toFixed(2), {
     ...brl, icon: 'mdi:cash-plus', friendly_name: 'Finanças · entradas do mês', mes: r.mes,
   }, log);
   await publicarEstado('sensor.financas_sem_categoria', r.semCategoria, {
-    friendly_name: 'Finanças · lançamentos sem categoria', icon: 'mdi:tag-off-outline',
+    friendly_name: 'Finanças · lançamentos sem categoria', icon: 'mdi:tag-off-outline', sugestoes_da_ia: r.sugestoes || 0,
   }, log);
   const ultimas = r.contas.map(c => c.ultima_importacao).filter(Boolean).sort();
   const atrasadas = r.contas.filter(c => !c.ultima_importacao || (Date.now() - Date.parse(c.ultima_importacao + 'Z')) > 8 * 864e5).map(c => c.nome);

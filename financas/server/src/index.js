@@ -9,6 +9,7 @@ import { abrirBanco, transacao, semearPessoas } from './db.js';
 import { decodificar, ehOfx, lerOfx, detectarDelimitador, lerCsvBruto, sugerirPerfil, aplicarPerfil, PRESETS } from './parsers.js';
 import { importar, registrarCarteira, aplicarRegrasSemCategoria, resumo } from './servico.js';
 import { escutarEvento, publicarResumo, haDisponivel, listarNotificadores } from './ha.js';
+import { iaDisponivel, estadoIa, sugerirCategorias, aceitarSugestoes, recusarSugestao, comentarMes } from './ia.js';
 
 const DEV = Boolean(process.env.FINANCAS_DEV);
 const DADOS = process.env.FINANCAS_DATA || '/data';
@@ -17,6 +18,11 @@ const opcoes = (() => {
 })();
 const PESSOAS = opcoes.pessoas?.length ? opcoes.pessoas : ['Daniel', 'Naomi'];
 const PASTA = opcoes.pasta_de_entrada || null;
+const IA = {
+  entidade: opcoes.ia_entidade || 'ai_task.ollama_casa',
+  reserva: opcoes.ia_reserva || null,
+  automatica: opcoes.ia_automatica !== false,
+};
 
 const db = abrirBanco(DADOS);
 semearPessoas(db, PESSOAS);
@@ -58,7 +64,31 @@ const uploads = new Map(); // token → { arq, criado }
 setInterval(() => { for (const [k, v] of uploads) if (Date.now() - v.criado > 30 * 6e4) uploads.delete(k); }, 6e4).unref();
 
 // ---------- API ----------
-app.get('/api/estado', async () => ({ pessoas: donos(), donos: donos(), ha: haDisponivel(), presets: PRESETS.map(p => ({ id: p.id, nome: p.nome })), pasta: PASTA }));
+app.get('/api/estado', async () => ({ pessoas: donos(), donos: donos(), ha: haDisponivel(), ia: iaDisponivel() ? IA.entidade : null, presets: PRESETS.map(p => ({ id: p.id, nome: p.nome })), pasta: PASTA }));
+
+// ---------- IA ----------
+let comentando = null;
+async function comentarAgora(mes) {
+  if (comentando) return comentando;
+  comentando = comentarMes(db, mes, IA).finally(() => { comentando = null; atualizarHa(); });
+  return comentando;
+}
+function iaDepoisDeImportar() {
+  if (!iaDisponivel() || !IA.automatica) return;
+  sugerirCategorias(db, { ...IA, aoTerminar: () => { atualizarHa(); comentarAgora(mesAtual()).catch(e => app.log.warn({ err: e.message }, 'IA: comentário falhou')); } }, app.log);
+}
+app.get('/api/ia/estado', async () => ({ disponivel: iaDisponivel(), entidade: IA.entidade, ...estadoIa }));
+app.post('/api/ia/sugerir', async (req, reply) => {
+  if (!iaDisponivel()) return reply.code(400).send({ erro: 'IA indisponível: o add-on precisa do Home Assistant' });
+  return sugerirCategorias(db, { ...IA, limite: req.body?.limite, aoTerminar: atualizarHa }, app.log);
+});
+app.post('/api/ia/aceitar', async req => { const r = aceitarSugestoes(db, req.body || {}); aplicarRegrasSemCategoria(db); atualizarHa(); return r; });
+app.post('/api/ia/recusar/:id', async req => { recusarSugestao(db, req.params.id); atualizarHa(); return { ok: true }; });
+app.post('/api/ia/comentario', async (req, reply) => {
+  if (!iaDisponivel()) return reply.code(400).send({ erro: 'IA indisponível' });
+  try { return await comentarAgora(req.body?.mes || mesAtual()); }
+  catch (e) { return reply.code(502).send({ erro: `a IA não respondeu: ${e.message}` }); }
+});
 
 
 // ---------- perfis ----------
@@ -167,13 +197,16 @@ app.get('/api/lancamentos', async req => {
   if (q.conta) { onde.push('l.conta_id = ?'); args.push(Number(q.conta)); }
   if (q.dono) { onde.push('c.dono = ?'); args.push(q.dono); }
   if (q.categoria === 'sem') onde.push('l.categoria_id IS NULL');
+  else if (q.categoria === 'sugestao') onde.push('l.categoria_id IS NULL AND l.sugestao_categoria_id IS NOT NULL');
   else if (q.categoria) { onde.push('l.categoria_id = ?'); args.push(Number(q.categoria)); }
-  if (q.busca) { onde.push('l.descricao LIKE ?'); args.push(`%${q.busca}%`); }
+  if (q.busca) { onde.push("(l.descricao LIKE ? OR COALESCE(l.detalhe,'') LIKE ?)"); args.push(`%${q.busca}%`, `%${q.busca}%`); }
   const where = onde.length ? `WHERE ${onde.join(' AND ')}` : '';
-  return db.prepare(`SELECT l.id, l.data, l.descricao, l.valor, l.categoria_id, l.nota, l.origem, l.conta_id,
+  return db.prepare(`SELECT l.id, l.data, l.descricao, l.detalhe, l.valor, l.categoria_id, l.nota, l.origem, l.conta_id,
+      l.sugestao_categoria_id, s.nome AS sugestao, s.cor AS sugestao_cor,
       c.nome AS conta, c.dono, k.nome AS categoria, k.cor, COALESCE(k.fora_do_total, 0) AS fora_do_total,
       EXISTS(SELECT 1 FROM carteira w WHERE w.lancamento_id = l.id) AS veio_da_carteira
     FROM lancamentos l JOIN contas c ON c.id = l.conta_id LEFT JOIN categorias k ON k.id = l.categoria_id
+    LEFT JOIN categorias s ON s.id = l.sugestao_categoria_id
     ${where} ORDER BY l.data DESC, l.id DESC LIMIT 2000`).all(...args);
 });
 
@@ -181,7 +214,7 @@ app.patch('/api/lancamentos/:id', async req => {
   const l = db.prepare('SELECT * FROM lancamentos WHERE id = ?').get(req.params.id);
   if (!l) return { ok: false };
   const b = req.body || {};
-  db.prepare('UPDATE lancamentos SET categoria_id = ?, nota = ? WHERE id = ?')
+  db.prepare('UPDATE lancamentos SET categoria_id = ?, nota = ?, sugestao_categoria_id = NULL WHERE id = ?')
     .run(b.categoria_id === undefined ? l.categoria_id : b.categoria_id, b.nota ?? l.nota, l.id);
   let aplicadas = 0;
   if (b.regra && b.categoria_id) {
@@ -194,7 +227,7 @@ app.patch('/api/lancamentos/:id', async req => {
 
 app.patch('/api/lancamentos', async req => {
   const { ids = [], categoria_id } = req.body || {};
-  const up = db.prepare('UPDATE lancamentos SET categoria_id = ? WHERE id = ?');
+  const up = db.prepare('UPDATE lancamentos SET categoria_id = ?, sugestao_categoria_id = NULL WHERE id = ?');
   transacao(db, () => ids.forEach(id => up.run(categoria_id ?? null, id)));
   atualizarHa();
   return { ok: true, n: ids.length };
@@ -214,13 +247,19 @@ app.post('/api/importar/previa', async (req, reply) => {
   if (arq.formato === 'csv') {
     const sugerido = sugerirPerfil(arq.bruto);
     const salvo = conta?.perfil_json ? JSON.parse(conta.perfil_json) : null;
-    perfil = salvo && salvo.assinatura === assinatura(arq.bruto, salvo.linhaCabecalho) ? salvo : sugerido;
+    perfil = salvo && salvo.assinatura === assinatura(arq.bruto, salvo.linhaCabecalho) ? completarPerfil(salvo, sugerido) : sugerido;
     colunas = arq.bruto[perfil.linhaCabecalho] || [];
     amostra = arq.bruto.slice(perfil.linhaCabecalho + 1, perfil.linhaCabecalho + 6);
   }
   const p = previa(arq, perfil);
   return { token, formato: arq.formato, nome: arq.nome, perfil, colunas, amostra, bruto: arq.formato === 'csv' ? arq.bruto.slice(0, 15) : [], ...resumoPrevia(p) };
 });
+
+// Perfis salvos antes da v0.3 não têm a coluna de detalhe (ex.: Histórico do Inter).
+function completarPerfil(salvo, sugerido) {
+  if (salvo.colDetalhe === undefined && sugerido.linhaCabecalho === salvo.linhaCabecalho) return { ...salvo, colDetalhe: sugerido.colDetalhe ?? -1 };
+  return salvo;
+}
 
 function assinatura(bruto, linhaCab) {
   return (bruto[linhaCab] || []).map(h => h.toLowerCase()).join('|');
@@ -260,7 +299,8 @@ app.post('/api/importar/confirmar', async (req, reply) => {
   const r = importar(db, { contaId: conta.id, linhas: p.linhas, arquivo: u.arq.nome, formato: u.arq.formato, quem: quem(req) });
   uploads.delete(token);
   atualizarHa();
-  return r;
+  iaDepoisDeImportar();
+  return { ...r, ia: iaDisponivel() && IA.automatica };
 });
 
 app.get('/api/importacoes', async () => db.prepare(`SELECT i.*, c.nome AS conta, c.dono FROM importacoes i JOIN contas c ON c.id = i.conta_id
@@ -290,6 +330,16 @@ if (existsSync(PUBLIC)) {
 // ---------- HA ----------
 escutarEvento('financas_compra', ev => { registrarCarteira(db, ev); atualizarHa(); }, app.log);
 setInterval(atualizarHa, 30 * 6e4).unref();
+// No começo do mês, fecha o anterior com um comentário da IA (se ainda não tiver).
+setInterval(() => {
+  if (!iaDisponivel()) return;
+  const d = new Date(); if (d.getDate() > 3) return;
+  const ant = new Date(d.getFullYear(), d.getMonth() - 1, 15);
+  const mes = `${ant.getFullYear()}-${String(ant.getMonth() + 1).padStart(2, '0')}`;
+  if (db.prepare('SELECT 1 FROM comentarios WHERE mes = ?').get(mes)) return;
+  if (!db.prepare('SELECT 1 FROM lancamentos WHERE substr(data,1,7) = ? LIMIT 1').get(mes)) return;
+  comentarAgora(mes).catch(e => app.log.warn({ err: e.message }, 'IA: comentário do mês falhou'));
+}, 60 * 6e4).unref();
 atualizarHa();
 
 // ---------- pasta de entrada ----------
@@ -307,13 +357,14 @@ function varrerPasta() {
         if (!/\.(csv|ofx|txt)$/i.test(f) || !statSync(caminho).isFile()) continue;
         try {
           const arq = ler(readFileSync(caminho), f);
-          const perfil = c.perfil_json ? JSON.parse(c.perfil_json) : (arq.formato === 'csv' ? sugerirPerfil(arq.bruto) : null);
+          const sug = arq.formato === 'csv' ? sugerirPerfil(arq.bruto) : null;
+          const perfil = c.perfil_json ? completarPerfil(JSON.parse(c.perfil_json), sug || {}) : sug;
           if (arq.formato === 'csv' && !c.perfil_json && !perfil.preset) {
             app.log.warn(`${f}: conta ${c.nome} ainda sem mapeamento; importe uma vez pelo painel`);
             continue;
           }
           const p = previa(arq, perfil);
-          if (p.linhas.length) importar(db, { contaId: c.id, linhas: p.linhas, arquivo: f, formato: arq.formato, quem: 'pasta' });
+          if (p.linhas.length) { importar(db, { contaId: c.id, linhas: p.linhas, arquivo: f, formato: arq.formato, quem: 'pasta' }); iaDepoisDeImportar(); }
           renameSync(caminho, join(dir, 'importados', `${new Date().toISOString().slice(0, 10)}_${basename(f)}`));
           atualizarHa();
         } catch (e) { app.log.error({ err: e.message, f }, 'falha ao importar da pasta'); }

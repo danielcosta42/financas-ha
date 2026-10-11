@@ -1,5 +1,5 @@
 name: Finanças
-version: "0.2.0"
+version: "0.3.0"
 slug: financas
 description: Finanças da casa — importação de extratos CSV/OFX, categorias e resumo no Home Assistant
 url: https://github.com/danielcosta42/financas-ha
@@ -21,7 +21,13 @@ options:
     - Daniel
     - Naomi
   pasta_de_entrada: /share/financas/entrada
+  ia_entidade: ai_task.ollama_casa
+  ia_reserva: ai_task.openai_ai_task
+  ia_automatica: true
 schema:
   pessoas:
     - str
   pasta_de_entrada: str
+  ia_entidade: str?
+  ia_reserva: str?
+  ia_automatica: bool?

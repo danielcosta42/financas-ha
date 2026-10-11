@@ -180,3 +180,13 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--ciano); }
 .perfil-pe .mudo { display: inline-flex; align-items: center; gap: 4px; }
 .ponto { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; vertical-align: 1px; }
 .link { background: none; border: 0; cursor: pointer; color: var(--azul); font-size: 12px; padding: 0; }
+
+/* v0.3 — IA e detalhes */
+.detalhe { color: var(--t3, var(--t2)); font-size: 12px; }
+.sugestao { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 12px; font-weight: 600; }
+.sugestao .mini { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--b2); background: var(--s1); color: var(--t2); cursor: pointer; font-size: 14px; line-height: 1; padding: 0; }
+.sugestao .mini.ok { color: var(--ciano, #4ff0c9); border-color: rgba(79,240,201,.45); }
+.sugestao .mini:hover { background: var(--s2, var(--s1)); }
+.comentario { font-size: 15px; line-height: 1.55; color: var(--t1); margin: 0 0 10px; }
+.comentario-rodape { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--t2); font-size: 12px; flex-wrap: wrap; }
+.recorrente-sub { color: var(--t2); font-size: 12px; }

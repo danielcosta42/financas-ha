@@ -20,11 +20,11 @@ export const api = {
 };
 
 export type Dono = string;
-export interface Estado { pessoas: string[]; donos: string[]; ha: boolean; presets: { id: string; nome: string }[]; pasta: string | null }
+export interface Estado { pessoas: string[]; donos: string[]; ha: boolean; ia: string | null; presets: { id: string; nome: string }[]; pasta: string | null }
 export interface Perfil {
   preset?: string | null; presetNome?: string | null; linhaCabecalho: number;
   colData: number; colDescricao: number; colValor: number; colDebito: number; colCredito: number; colId: number;
-  formatoData: string; decimal: string; inverterSinal: boolean;
+  formatoData: string; decimal: string; inverterSinal: boolean; colDetalhe?: number;
 }
 export interface Pessoa {
   id: number; nome: string; tipo: 'pessoa' | 'casa' | 'empresa'; cor: string | null; renda_mensal: number | null; dia_recebimento: number | null;
@@ -33,15 +33,18 @@ export interface Pessoa {
 export interface Conta { id: number; nome: string; tipo: 'corrente' | 'cartao' | 'outro'; dono: Dono; banco: string | null; arquivada: number; ultima_importacao: string | null; lancamentos: number; perfil: Perfil | null }
 export interface Categoria { id: number; nome: string; grupo: string | null; cor: string | null; fora_do_total: number; usos: number }
 export interface Regra { id: number; padrao: string; categoria_id: number; categoria: string; cor: string }
-export interface Lancamento { id: number; data: string; descricao: string; valor: number; categoria_id: number | null; categoria: string | null; cor: string | null; conta: string; conta_id: number; dono: string; nota: string | null; veio_da_carteira: number; fora_do_total: number }
+export interface Lancamento { id: number; data: string; descricao: string; detalhe: string | null; sugestao_categoria_id: number | null; sugestao: string | null; sugestao_cor: string | null; valor: number; categoria_id: number | null; categoria: string | null; cor: string | null; conta: string; conta_id: number; dono: string; nota: string | null; veio_da_carteira: number; fora_do_total: number }
 export interface LinhaPrevia { data: string; descricao: string; valor: number; id_externo: string | null }
 export interface Previa {
   token: string; formato: 'csv' | 'ofx'; nome: string; perfil: Perfil | null; colunas: string[]; amostra: string[][]; bruto: string[][];
   total: number; saidas: number; entradas: number; de: string | null; ate: string | null; exemplos: LinhaPrevia[]; erros: { linha: number; conteudo: string }[]; nErros: number;
 }
+export interface EstadoIa { disponivel: boolean; entidade: string; rodando: boolean; feitos: number; total: number; sugeridos: number; erro: string | null; fim: string | null }
 export interface Importacao { id: number; conta: string; dono: string; arquivo: string; formato: string; novos: number; duplicados: number; de: string; ate: string; quem: string | null; criado_em: string }
 export interface Resumo {
-  mes: string; saidas: number; entradas: number; n: number; semCategoria: number;
+  mes: string; saidas: number; entradas: number; n: number; semCategoria: number; sugestoes: number;
+  comentario: { texto: string; origem: string | null; criado_em: string } | null;
+  recorrentes: { descricao: string; valor: number; vezes: number; total: number; ultima: string; categoria: string | null }[];
   porCategoria: { categoria: string; cor: string | null; categoria_id: number | null; total: number; n: number }[];
   porDono: { dono: string; total: number; cor: string | null; renda_mensal: number | null; tipo: string | null }[];
   rendaDeclarada: number;

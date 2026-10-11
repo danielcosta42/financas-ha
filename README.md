@@ -12,6 +12,12 @@ App de finanças pessoais que roda dentro do Home Assistant, abre na barra later
 - **Sensores no HA**: `sensor.financas_saidas_do_mes`, `sensor.financas_entradas_do_mes`, `sensor.financas_sem_categoria`, `sensor.financas_ultima_importacao` (com `contas_atrasadas`).
 - **Pasta de entrada** (opcional): `/share/financas/entrada/<Dono> - <Conta>/` — um arquivo solto ali é importado com o mapeamento salvo e movido para `importados/`.
 
+## Novidades
+
+- **v0.3 — IA local**: depois de cada importação, a IA do HA (`ai_task`, Ollama por padrão) sugere categoria pros lançamentos sem regra, aprendendo com as categorias que vocês já usaram. Nada muda sozinho: a sugestão aparece na lista com ✓/×, e "Aceitar todas" cria regras pros estabelecimentos que se repetem. Comentário do mês gerado pela IA no Resumo (e no atributo `comentario` do sensor de saídas). Presets do **Inter** (conta e cartão), com o Histórico ("Pix enviado", "Compra no débito") guardado como detalhe e usado pelas regras. Card **Cobranças que se repetem** (mesmo valor 3+ vezes em 90 dias). Regras: vence a que aparece primeiro na descrição. Corrige uma recursão que derrubava o add-on quando o WebSocket do HA caía.
+  - Opções: `ia_entidade` (padrão `ai_task.ollama_casa`), `ia_reserva` (usada se a primeira falhar), `ia_automatica`.
+- **v0.2**: perfis com renda declarada, recebimento, regime, meta de poupança e aviso no celular.
+
 ## Instalar
 
 1. No HA: **Configurações → Complementos → Loja de complementos → ⋮ → Repositórios** e adicione a URL deste repositório.

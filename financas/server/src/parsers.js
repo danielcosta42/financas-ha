@@ -81,6 +81,18 @@ export const PRESETS = [
     casa: h => h.includes('identificador') && h.includes('descricao') && h.includes('valor') && h.includes('data'),
     perfil: { colData: 'data', colDescricao: 'descricao', colValor: 'valor', colId: 'identificador', formatoData: 'dd/mm/yyyy', decimal: 'auto', inverterSinal: false },
   },
+  {
+    // Inter conta: "Data Lançamento;Histórico;Descrição;Valor;Saldo" (cabeçalho na linha 5).
+    id: 'inter-conta', nome: 'Inter · conta',
+    casa: h => h.includes('data lancamento') && h.includes('historico') && h.includes('descricao') && h.includes('valor'),
+    perfil: { colData: 'data lancamento', colDescricao: 'descricao', colDetalhe: 'historico', colValor: 'valor', formatoData: 'dd/mm/yyyy', decimal: ',', inverterSinal: false },
+  },
+  {
+    // Inter cartão: "Data;Lançamento;Categoria;Tipo;Valor" — compra vem positiva.
+    id: 'inter-cartao', nome: 'Inter · cartão',
+    casa: h => h.includes('data') && h.includes('lancamento') && h.includes('tipo') && h.includes('valor'),
+    perfil: { colData: 'data', colDescricao: 'lancamento', colDetalhe: 'tipo', colValor: 'valor', formatoData: 'dd/mm/yyyy', decimal: ',', inverterSinal: true },
+  },
 ];
 
 const PALAVRAS = {
@@ -120,6 +132,7 @@ export function sugerirPerfil(linhas) {
         preset: p.id, presetNome: p.nome, linhaCabecalho: iCab,
         colData: idx(p.perfil.colData), colDescricao: idx(p.perfil.colDescricao), colValor: idx(p.perfil.colValor),
         colDebito: -1, colCredito: -1, colId: p.perfil.colId ? idx(p.perfil.colId) : -1,
+        colDetalhe: p.perfil.colDetalhe ? idx(p.perfil.colDetalhe) : -1,
         formatoData: p.perfil.formatoData, decimal: p.perfil.decimal, inverterSinal: p.perfil.inverterSinal,
       };
     }
@@ -130,10 +143,12 @@ export function sugerirPerfil(linhas) {
   const colDebito = colValor < 0 ? achaColuna(cab, PALAVRAS.debito) : -1;
   const colCredito = colValor < 0 ? achaColuna(cab, PALAVRAS.credito) : -1;
   const colId = cab.findIndex((h, i) => ![colData, colDescricao, colValor].includes(i) && PALAVRAS.id.includes(h));
+  // "Histórico" ao lado de "Descrição" = tipo do movimento (Pix enviado, Compra no débito…)
+  const colDetalhe = cab[colDescricao] === 'descricao' ? cab.findIndex((h, i) => i !== colDescricao && h === 'historico') : -1;
   const amostras = linhas.slice(iCab + 1, iCab + 30).map(l => l[colData]).filter(Boolean);
   return {
     preset: null, presetNome: null, linhaCabecalho: iCab,
-    colData, colDescricao, colValor, colDebito, colCredito, colId,
+    colData, colDescricao, colValor, colDebito, colCredito, colId, colDetalhe,
     formatoData: detectarFormatoData(amostras), decimal: 'auto', inverterSinal: false,
   };
 }
@@ -206,9 +221,11 @@ export function aplicarPerfil(linhas, perfil) {
       if (l.filter(Boolean).length >= 2) erros.push({ linha: i + (perfil.linhaCabecalho ?? 0) + 2, conteudo: l.join(' | ') });
       return;
     }
+    const detalhe = perfil.colDetalhe >= 0 ? (l[perfil.colDetalhe] || '').trim() || null : null;
     saida.push({
       data,
       descricao: descricao || 'Sem descrição',
+      detalhe,
       valor: perfil.inverterSinal ? -valor : valor,
       id_externo: perfil.colId >= 0 ? (l[perfil.colId] || null) : null,
     });

@@ -1,11 +1,17 @@
 import { transacao } from './db.js';
 import { atribuirChaves, normaliza } from './parsers.js';
 
-export function categorizar(db, descricao) {
+export function categorizar(db, descricao, detalhe = '') {
   const regras = db.prepare('SELECT padrao, categoria_id FROM regras ORDER BY length(padrao) DESC').all();
-  const d = normaliza(descricao);
-  const r = regras.find(x => d.includes(normaliza(x.padrao)));
-  return r ? r.categoria_id : null;
+  const d = normaliza(`${descricao} ${detalhe || ''}`).replace(/\s+/g, ' ');
+  // Vence a regra que aparece primeiro na descrição (o nome da loja costuma vir antes);
+  // empate na posição fica com a mais longa (já ordenadas por tamanho).
+  let melhor = null, pos = Infinity;
+  for (const x of regras) {
+    const i = d.indexOf(normaliza(x.padrao));
+    if (i >= 0 && i < pos) { melhor = x; pos = i; }
+  }
+  return melhor ? melhor.categoria_id : null;
 }
 
 // Concilia compras da Carteira ainda soltas com lançamentos do extrato:
@@ -35,12 +41,15 @@ export function importar(db, { contaId, linhas, arquivo, formato, quem }) {
     const imp = db.prepare('INSERT INTO importacoes (conta_id, arquivo, formato, de, ate, quem) VALUES (?,?,?,?,?,?)')
       .run(contaId, arquivo, formato, datas[0] || null, datas.at(-1) || null, quem || null);
     const impId = Number(imp.lastInsertRowid);
-    const ins = db.prepare(`INSERT OR IGNORE INTO lancamentos (conta_id, data, descricao, valor, categoria_id, chave, id_externo, origem, importacao_id)
-      VALUES (?,?,?,?,?,?,?,'import',?)`);
+    const ins = db.prepare(`INSERT OR IGNORE INTO lancamentos (conta_id, data, descricao, detalhe, valor, categoria_id, chave, id_externo, origem, importacao_id)
+      VALUES (?,?,?,?,?,?,?,?,'import',?)`);
+    // Reimportar completa o detalhe de lançamentos antigos (importados antes da v0.3).
+    const completa = db.prepare('UPDATE lancamentos SET detalhe = ? WHERE conta_id = ? AND chave = ? AND detalhe IS NULL');
     let novos = 0, duplicados = 0;
     for (const l of comChave) {
-      const r = ins.run(contaId, l.data, l.descricao, Math.round(l.valor * 100) / 100, categorizar(db, l.descricao), l.chave, l.id_externo ?? null, impId);
-      if (r.changes) novos++; else duplicados++;
+      const r = ins.run(contaId, l.data, l.descricao, l.detalhe ?? null, Math.round(l.valor * 100) / 100, categorizar(db, l.descricao, l.detalhe), l.chave, l.id_externo ?? null, impId);
+      if (r.changes) novos++;
+      else { duplicados++; if (l.detalhe) completa.run(l.detalhe, contaId, l.chave); }
     }
     db.prepare('UPDATE importacoes SET novos = ?, duplicados = ? WHERE id = ?').run(novos, duplicados, impId);
     const conciliados = conciliarCarteira(db);
@@ -58,10 +67,10 @@ export function registrarCarteira(db, ev) {
 }
 
 export function aplicarRegrasSemCategoria(db) {
-  const sem = db.prepare('SELECT id, descricao FROM lancamentos WHERE categoria_id IS NULL').all();
-  const up = db.prepare('UPDATE lancamentos SET categoria_id = ? WHERE id = ?');
+  const sem = db.prepare('SELECT id, descricao, detalhe FROM lancamentos WHERE categoria_id IS NULL').all();
+  const up = db.prepare('UPDATE lancamentos SET categoria_id = ?, sugestao_categoria_id = NULL, sugestao_de = NULL WHERE id = ?');
   let n = 0;
-  transacao(db, () => { for (const l of sem) { const c = categorizar(db, l.descricao); if (c) { up.run(c, l.id); n++; } } });
+  transacao(db, () => { for (const l of sem) { const c = categorizar(db, l.descricao, l.detalhe); if (c) { up.run(c, l.id); n++; } } });
   return n;
 }
 
@@ -86,5 +95,30 @@ export function resumo(db, mes) {
       (SELECT MAX(criado_em) FROM importacoes i WHERE i.conta_id = c.id) AS ultima_importacao,
       (SELECT MAX(data) FROM lancamentos x WHERE x.conta_id = c.id) AS ultimo_lancamento
       FROM contas c WHERE c.arquivada = 0 ORDER BY c.dono, c.nome`).all();
-  return { mes, ...tot, rendaDeclarada: renda, porCategoria, porDono, semCategoria, carteiraPendente: carteira, contas };
+  const comentario = db.prepare('SELECT texto, origem, criado_em FROM comentarios WHERE mes = ?').get(mes) || null;
+  const sugestoes = db.prepare('SELECT COUNT(*) AS n FROM lancamentos WHERE categoria_id IS NULL AND sugestao_categoria_id IS NOT NULL').get().n;
+  return { mes, ...tot, rendaDeclarada: renda, porCategoria, porDono, semCategoria, sugestoes, carteiraPendente: carteira, contas, comentario, recorrentes: recorrentes(db, fim) };
+}
+
+// Nome "limpo" do estabelecimento: tira cidade/país do fim e códigos.
+export const estabelecimento = d => normaliza(d)
+  .replace(/\s+(sao paulo|osasco|ubatuba|rio de janeiro|barueri|santos|campinas)?\s*bra$/, '')
+  .replace(/\*[\w-]+/g, '').replace(/\d{4,}/g, '').replace(/\s+/g, ' ').trim();
+
+// Cobranças que se repetem: mesmo estabelecimento e mesmo valor 3+ vezes nos últimos 90 dias.
+export function recorrentes(db, ate) {
+  const linhas = db.prepare(`SELECT l.descricao, l.valor, l.data, k.nome AS categoria FROM lancamentos l LEFT JOIN categorias k ON k.id = l.categoria_id
+    WHERE l.valor < 0 AND l.data >= date(?, '-90 day') AND l.data < ? AND COALESCE(k.fora_do_total,0) = 0`).all(ate, ate);
+  const grupos = new Map();
+  for (const l of linhas) {
+    const nome = estabelecimento(l.descricao);
+    if (!nome || nome === 'sem descricao') continue;
+    const k = `${nome}|${l.valor.toFixed(2)}`;
+    const g = grupos.get(k) || { descricao: l.descricao.replace(/\s{2,}.*$/, '').trim(), valor: -l.valor, vezes: 0, ultima: l.data, categoria: l.categoria };
+    g.vezes++; if (l.data > g.ultima) g.ultima = l.data;
+    grupos.set(k, g);
+  }
+  return [...grupos.values()].filter(g => g.vezes >= 3)
+    .map(g => ({ ...g, total: Math.round(g.valor * g.vezes * 100) / 100 }))
+    .sort((a, b) => b.total - a.total).slice(0, 8);
 }

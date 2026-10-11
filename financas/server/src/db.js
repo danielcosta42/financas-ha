@@ -22,6 +22,7 @@ const CATEGORIAS_PADRAO = [
   ['Transferência entre contas', 'Movimentação', '#8089a7', 1],
   ['Pagamento de fatura', 'Movimentação', '#8089a7', 1],
   ['Investimentos', 'Movimentação', '#8089a7', 1],
+  ['Seguros e tarifas', 'Pessoal', '#8089a7', 0],
 ];
 
 const REGRAS_PADRAO = [
@@ -33,6 +34,10 @@ const REGRAS_PADRAO = [
   ['aluguel', 'Moradia'], ['condominio', 'Moradia'], ['iptu', 'Moradia'], ['enel', 'Contas da casa'], ['sabesp', 'Contas da casa'], ['comgas', 'Contas da casa'], ['claro', 'Contas da casa'], ['vivo', 'Contas da casa'],
   ['pagamento de fatura', 'Pagamento de fatura'], ['pagamento recebido', 'Pagamento de fatura'], ['pgto fatura', 'Pagamento de fatura'],
   ['aplicacao', 'Investimentos'], ['resgate', 'Investimentos'], ['das simples', 'Impostos'], ['darf', 'Impostos'],
+  ['pagamento fatura', 'Pagamento de fatura'], ['receita federal', 'Impostos'], ['resgate pontos', 'Outras entradas'], ['cashback', 'Outras entradas'],
+  ['seguro pix', 'Seguros e tarifas'], ['seguro cartao', 'Seguros e tarifas'], ['protecao financeira', 'Seguros e tarifas'], ['tarifa', 'Seguros e tarifas'],
+  ['lanchonete', 'Restaurantes'], ['restaurante', 'Restaurantes'], ['padaria', 'Restaurantes'], ['oxxo', 'Mercado'], ['minuto pa', 'Mercado'], ['conveniencia', 'Mercado'],
+  ['amazon', 'Compras'], ['mercadolivre', 'Compras'], ['mercado livre', 'Compras'], ['shopee', 'Compras'], ['metro', 'Transporte'],
 ];
 
 export function abrirBanco(dir) {
@@ -114,6 +119,8 @@ export function abrirBanco(dir) {
     );
   `);
 
+  migrar(db);
+
   const n = db.prepare('SELECT COUNT(*) AS n FROM categorias').get().n;
   if (n === 0) {
     const ins = db.prepare('INSERT INTO categorias (nome, grupo, cor, fora_do_total) VALUES (?,?,?,?)');
@@ -123,6 +130,25 @@ export function abrirBanco(dir) {
     for (const [p, c] of REGRAS_PADRAO) insR.run(p, idDe.get(c).id);
   }
   return db;
+}
+
+// v0.3: detalhe (ex.: "Pix enviado" no Inter), sugestão da IA e comentários do mês.
+function migrar(db) {
+  const cols = db.prepare('PRAGMA table_info(lancamentos)').all().map(c => c.name);
+  const add = (nome, tipo) => { if (!cols.includes(nome)) db.exec(`ALTER TABLE lancamentos ADD COLUMN ${nome} ${tipo}`); };
+  add('detalhe', 'TEXT');
+  add('sugestao_categoria_id', 'INTEGER REFERENCES categorias(id) ON DELETE SET NULL');
+  add('sugestao_de', 'TEXT');
+  db.exec(`CREATE TABLE IF NOT EXISTS comentarios (
+    mes TEXT PRIMARY KEY,
+    texto TEXT NOT NULL,
+    origem TEXT,
+    criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+  );`);
+  // Categoria nova padrão (bases antigas não têm).
+  if (db.prepare('SELECT COUNT(*) AS n FROM categorias').get().n > 0) {
+    db.prepare("INSERT OR IGNORE INTO categorias (nome, grupo, cor, fora_do_total) VALUES ('Seguros e tarifas','Pessoal','#8089a7',0)").run();
+  }
 }
 
 const CORES = ['#7fb2ff', '#ff4fd8', '#4ff0c9', '#ffb86b', '#b18cff', '#ffe38a'];

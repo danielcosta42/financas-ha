@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { lerValor, lerData, lerCsvBruto, detectarDelimitador, sugerirPerfil, aplicarPerfil, lerOfx, decodificar, atribuirChaves } from '../src/parsers.js';
 import { abrirBanco } from '../src/db.js';
-import { importar, registrarCarteira, resumo } from '../src/servico.js';
+import { importar, registrarCarteira, resumo, categorizar, recorrentes } from '../src/servico.js';
 
 test('valores em formatos brasileiros e americanos', () => {
   assert.equal(lerValor('R$ 1.234,56'), 1234.56);
@@ -86,4 +86,40 @@ test('reimportar o mesmo extrato não duplica e a Carteira é conciliada', () =>
   const cats = Object.fromEntries(r.porCategoria.map(c => [c.categoria, c.total]));
   assert.equal(cats.Delivery, 45.9);
   assert.equal(cats.Transporte, 22);
+});
+
+test('Inter conta: preset lê Histórico como detalhe e a regra vê os dois', () => {
+  const csv = 'Extrato Conta Corrente\nConta ;123\nPeríodo ;01/09/2026 a 30/09/2026\nSaldo ;1.000,00\nData Lançamento;Histórico;Descrição;Valor;Saldo\n15/09/2026;Pix enviado ;Renato Coelho;-900,00;100,00\n14/09/2026;Pagamento efetuado;Receita Federal;-25,48;1000,00\n29/09/2026;Pix enviado ;;-100,00;0,00\n';
+  const bruto = lerCsvBruto(csv, ';');
+  const perfil = sugerirPerfil(bruto);
+  assert.equal(perfil.preset, 'inter-conta');
+  const { linhas } = aplicarPerfil(bruto, perfil);
+  assert.equal(linhas.length, 3);
+  assert.equal(linhas[0].descricao, 'Renato Coelho');
+  assert.equal(linhas[0].detalhe, 'Pix enviado');
+  assert.equal(linhas[0].valor, -900);
+  assert.equal(linhas[2].descricao, 'Sem descrição');
+});
+
+test('Inter cartão: compra positiva vira saída', () => {
+  const csv = '"Data","Lançamento","Categoria","Tipo","Valor"\n"05/10/2026","IFOOD *RESTAURANTE","RESTAURANTES","Compra à vista","R$ 45,90"\n"10/10/2026","PAGAMENTO ON LINE","OUTROS","Pagamento","-R$ 1.234,56"\n';
+  const bruto = lerCsvBruto(csv, ',');
+  const perfil = sugerirPerfil(bruto);
+  assert.equal(perfil.preset, 'inter-cartao');
+  const { linhas } = aplicarPerfil(bruto, perfil);
+  assert.equal(linhas[0].valor, -45.9);
+  assert.equal(linhas[0].detalhe, 'Compra à vista');
+  assert.equal(linhas[1].valor, 1234.56);
+});
+
+test('regra: vence a que aparece primeiro; recorrentes acham cobrança repetida', () => {
+  const db = abrirBanco(mkdtempSync(join(tmpdir(), 'fin-')));
+  assert.equal(categorizar(db, 'iFood *Restaurante'), db.prepare("SELECT id FROM categorias WHERE nome='Delivery'").get().id);
+  assert.equal(categorizar(db, 'Pagamento Fatura - DANIEL'), db.prepare("SELECT id FROM categorias WHERE nome='Pagamento de fatura'").get().id);
+  const conta = Number(db.prepare("INSERT INTO contas (nome, tipo, dono) VALUES ('Inter','corrente','Daniel')").run().lastInsertRowid);
+  const linhas = ['2026-09-01', '2026-09-08', '2026-09-15'].map(d => ({ data: d, descricao: 'Raconveniencia        Ubatuba      Bra', valor: -14.99 }));
+  importar(db, { contaId: conta, linhas, arquivo: 'x.csv', formato: 'csv' });
+  const rec = recorrentes(db, '2026-10-01');
+  assert.equal(rec.length, 1);
+  assert.equal(rec[0].vezes, 3);
 });

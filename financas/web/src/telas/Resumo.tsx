@@ -6,7 +6,18 @@ import { Cabecalho, Icone, Stat, Vazio } from '../ui';
 export function Resumo({ ctx }: { ctx: Ctx }) {
   const [mes, setMes] = useState(mesAtual());
   const [r, setR] = useState<R | null>(null);
+  const [comentando, setComentando] = useState(false);
+  const [erroIa, setErroIa] = useState<string | null>(null);
   useEffect(() => { api.get<R>(`resumo?mes=${mes}`).then(setR); }, [mes]);
+
+  async function comentar() {
+    setComentando(true); setErroIa(null);
+    try {
+      const c = await api.post<{ texto: string; origem: string }>('ia/comentario', { mes });
+      setR(x => x && { ...x, comentario: { texto: c.texto, origem: c.origem, criado_em: new Date().toISOString().replace('T', ' ').slice(0, 19) } });
+    } catch (e) { setErroIa((e as Error).message); }
+    setComentando(false);
+  }
 
   if (!ctx.contas.length) {
     return (
@@ -55,9 +66,22 @@ export function Resumo({ ctx }: { ctx: Ctx }) {
         <button className={`stat clicavel ${r.semCategoria ? 'amarelo' : ''}`} onClick={() => ctx.ir('lancamentos', { categoria: 'sem' })}>
           <div className="stat-l">Sem categoria</div>
           <div className="stat-v mono">{r.semCategoria}</div>
-          <div className="stat-s">{r.semCategoria ? 'toque para categorizar' : 'tudo categorizado'}</div>
+          <div className="stat-s">{r.semCategoria ? (r.sugestoes ? `${r.sugestoes} com sugestão da IA` : 'toque para categorizar') : 'tudo categorizado'}</div>
         </button>
       </section>
+
+      {ctx.estado.ia && (
+        <section className="card">
+          <div className="sh"><h2><Icone nome="estrela" tamanho={16} /> Comentário do mês</h2><span className="m">IA local</span></div>
+          {r.comentario
+            ? <p className="comentario">{r.comentario.texto}</p>
+            : <p className="mudo">{comentando ? 'A IA está lendo o mês…' : 'Ainda sem comentário pra este mês.'}</p>}
+          <div className="comentario-rodape">
+            <span>{erroIa ? <span className="txt-laranja">{erroIa}</span> : r.comentario ? `gerado em ${dataBr(r.comentario.criado_em)} · ${(r.comentario.origem || '').replace('ai_task.', '')}` : 'gera sozinho depois de cada importação'}</span>
+            <button className="btn pequeno roxo" disabled={comentando} onClick={comentar}>{comentando ? 'Pensando…' : r.comentario ? 'Gerar de novo' : 'Gerar agora'}</button>
+          </div>
+        </section>
+      )}
 
       <div className="grade-2">
         <section className="card">
@@ -92,6 +116,19 @@ export function Resumo({ ctx }: { ctx: Ctx }) {
               {r.porDono.length === 0 && <li className="mudo">—</li>}
             </ul>
           </section>
+          {r.recorrentes.length > 0 && (
+            <section className="card">
+              <div className="sh"><h2><Icone nome="repetir" tamanho={16} /> Cobranças que se repetem</h2><span className="m">últimos 90 dias</span></div>
+              <ul className="linhas">
+                {r.recorrentes.map(x => (
+                  <li key={x.descricao + x.valor}>
+                    <span><b>{x.descricao}</b><br /><span className="recorrente-sub">{x.vezes}x de {brl(x.valor)} · última {dataBr(x.ultima)}{x.categoria ? ` · ${x.categoria}` : ''}</span></span>
+                    <span className="mono">{brl(x.total)}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           <section className="card">
             <div className="sh"><h2>Extratos</h2><span className="m">última importação</span></div>
             <ul className="linhas">
