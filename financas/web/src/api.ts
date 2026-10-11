@@ -36,7 +36,7 @@ export interface Regra { id: number; padrao: string; categoria_id: number; categ
 export interface Lancamento { id: number; data: string; descricao: string; detalhe: string | null; sugestao_categoria_id: number | null; sugestao: string | null; sugestao_cor: string | null; valor: number; categoria_id: number | null; categoria: string | null; cor: string | null; conta: string; conta_id: number; dono: string; nota: string | null; veio_da_carteira: number; fora_do_total: number }
 export interface LinhaPrevia { data: string; descricao: string; valor: number; id_externo: string | null }
 export interface Previa {
-  token: string; formato: 'csv' | 'ofx'; nome: string; perfil: Perfil | null; colunas: string[]; amostra: string[][]; bruto: string[][];
+  token: string; formato: 'csv' | 'ofx' | 'pdf'; banco?: string; nome: string; perfil: Perfil | null; colunas: string[]; amostra: string[][]; bruto: string[][];
   total: number; saidas: number; entradas: number; de: string | null; ate: string | null; exemplos: LinhaPrevia[]; erros: { linha: number; conteudo: string }[]; nErros: number;
 }
 export interface EstadoIa { disponivel: boolean; entidade: string; rodando: boolean; feitos: number; total: number; sugeridos: number; erro: string | null; fim: string | null }

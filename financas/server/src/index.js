@@ -9,6 +9,7 @@ import { abrirBanco, transacao, semearPessoas } from './db.js';
 import { decodificar, ehOfx, lerOfx, detectarDelimitador, lerCsvBruto, sugerirPerfil, aplicarPerfil, PRESETS } from './parsers.js';
 import { importar, registrarCarteira, aplicarRegrasSemCategoria, resumo } from './servico.js';
 import { escutarEvento, publicarResumo, haDisponivel, listarNotificadores } from './ha.js';
+import { ehPdf, lerPdf } from './pdf.js';
 import { iaDisponivel, estadoIa, sugerirCategorias, aceitarSugestoes, recusarSugestao, comentarMes } from './ia.js';
 
 const DEV = Boolean(process.env.FINANCAS_DEV);
@@ -45,7 +46,8 @@ const atualizarHa = () => {
 };
 
 // ---------- leitura de arquivo ----------
-function ler(buf, nome) {
+async function ler(buf, nome) {
+  if (ehPdf(buf)) return { ...(await lerPdf(buf)), nome };
   const txt = decodificar(buf);
   if (ehOfx(txt)) return { formato: 'ofx', linhas: lerOfx(txt), nome };
   const delim = detectarDelimitador(txt);
@@ -55,7 +57,7 @@ function ler(buf, nome) {
 }
 
 function previa(arq, perfil) {
-  if (arq.formato === 'ofx') return { formato: 'ofx', linhas: arq.linhas, erros: [] };
+  if (arq.formato !== 'csv') return { formato: arq.formato, linhas: arq.linhas, erros: arq.erros || [] };
   const r = aplicarPerfil(arq.bruto, perfil);
   return { formato: 'csv', ...r };
 }
@@ -238,7 +240,7 @@ app.post('/api/importar/previa', async (req, reply) => {
   if (!f) return reply.code(400).send({ erro: 'envie um arquivo' });
   const buf = await f.toBuffer();
   let arq;
-  try { arq = ler(buf, f.filename); } catch (e) { return reply.code(400).send({ erro: `não consegui ler o arquivo: ${e.message}` }); }
+  try { arq = await ler(buf, f.filename); } catch (e) { return reply.code(400).send({ erro: `não consegui ler o arquivo: ${e.message}` }); }
   const token = randomUUID();
   uploads.set(token, { arq, criado: Date.now() });
   const contaId = Number(f.fields?.contaId?.value) || null;
@@ -252,7 +254,7 @@ app.post('/api/importar/previa', async (req, reply) => {
     amostra = arq.bruto.slice(perfil.linhaCabecalho + 1, perfil.linhaCabecalho + 6);
   }
   const p = previa(arq, perfil);
-  return { token, formato: arq.formato, nome: arq.nome, perfil, colunas, amostra, bruto: arq.formato === 'csv' ? arq.bruto.slice(0, 15) : [], ...resumoPrevia(p) };
+  return { token, formato: arq.formato, banco: arq.banco || null, nome: arq.nome, perfil, colunas, amostra, bruto: arq.formato === 'csv' ? arq.bruto.slice(0, 15) : [], ...resumoPrevia(p) };
 });
 
 // Perfis salvos antes da v0.3 não têm a coluna de detalhe (ex.: Histórico do Inter).
@@ -345,7 +347,7 @@ atualizarHa();
 // ---------- pasta de entrada ----------
 // Cada conta ganha uma subpasta; um CSV/OFX solto ali é importado com o mapeamento salvo da conta.
 const slug = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w\- ]+/g, '').trim();
-function varrerPasta() {
+async function varrerPasta() {
   if (!PASTA) return;
   try {
     mkdirSync(PASTA, { recursive: true });
@@ -354,9 +356,9 @@ function varrerPasta() {
       mkdirSync(join(dir, 'importados'), { recursive: true });
       for (const f of readdirSync(dir)) {
         const caminho = join(dir, f);
-        if (!/\.(csv|ofx|txt)$/i.test(f) || !statSync(caminho).isFile()) continue;
+        if (!/\.(csv|ofx|txt|pdf)$/i.test(f) || !statSync(caminho).isFile()) continue;
         try {
-          const arq = ler(readFileSync(caminho), f);
+          const arq = await ler(readFileSync(caminho), f);
           const sug = arq.formato === 'csv' ? sugerirPerfil(arq.bruto) : null;
           const perfil = c.perfil_json ? completarPerfil(JSON.parse(c.perfil_json), sug || {}) : sug;
           if (arq.formato === 'csv' && !c.perfil_json && !perfil.preset) {

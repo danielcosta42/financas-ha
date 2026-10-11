@@ -123,3 +123,18 @@ test('regra: vence a que aparece primeiro; recorrentes acham cobrança repetida'
   assert.equal(rec.length, 1);
   assert.equal(rec[0].vezes, 3);
 });
+
+test('fatura do Inter (texto do PDF): compras, crédito, parcela e cartão', async () => {
+  const { lerFaturaInter, ehFaturaInter } = await import('../src/pdf.js');
+  const linhas = ['Resumo da fatura', 'Data de Vencimento 15/07/2026', 'Despesas da fatura', 'CARTÃO 5364****6986', 'Data   Movimentação   Beneficiário   Valor',
+    '15 de jun. 2026   PAGTO DEBITO AUTOMATICO   -   + R$ 6.939,18', '15 de jun. 2026   QUINTOANDAR   -   R$ 2.854,34',
+    'Total CARTÃO 5364****6986   R$ 2.854,34', 'CARTÃO 5364****7172', '19 de fev. 2026   MLP *KaBuM-KaBuM (Parcela 05 de 10)   -   R$ 810,89', 'www.bancointer.com.br'];
+  assert.ok(ehFaturaInter(linhas));
+  const r = lerFaturaInter(linhas);
+  assert.equal(r.vencimento, '2026-07-15');
+  assert.equal(r.linhas.length, 3);
+  assert.equal(r.linhas[0].valor, 6939.18);
+  assert.equal(r.linhas[1].valor, -2854.34);
+  assert.equal(r.linhas[2].data, '2026-06-19');
+  assert.equal(r.linhas[2].detalhe, 'Cartão final 7172 · parcela 5/10');
+});

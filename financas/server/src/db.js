@@ -37,6 +37,9 @@ const REGRAS_PADRAO = [
   ['pagamento fatura', 'Pagamento de fatura'], ['receita federal', 'Impostos'], ['resgate pontos', 'Outras entradas'], ['cashback', 'Outras entradas'],
   ['seguro pix', 'Seguros e tarifas'], ['seguro cartao', 'Seguros e tarifas'], ['protecao financeira', 'Seguros e tarifas'], ['tarifa', 'Seguros e tarifas'],
   ['lanchonete', 'Restaurantes'], ['restaurante', 'Restaurantes'], ['padaria', 'Restaurantes'], ['oxxo', 'Mercado'], ['minuto pa', 'Mercado'], ['conveniencia', 'Mercado'],
+  ['pagto debito automatico', 'Pagamento de fatura'], ['iof internacional', 'Seguros e tarifas'], ['anuidade', 'Seguros e tarifas'],
+  ['quintoandar', 'Moradia'], ['anthropic', 'Assinaturas'], ['dazn', 'Assinaturas'], ['discord', 'Assinaturas'], ['github', 'Assinaturas'], ['twitch', 'Assinaturas'], ['google cloud', 'Assinaturas'], ['amazonprime', 'Assinaturas'], ['uber *one', 'Assinaturas'],
+  ['ifd*', 'Delivery'], ['zee now', 'Delivery'], ['daki', 'Mercado'], ['kabum', 'Compras'], ['pizza', 'Restaurantes'], ['boteco', 'Restaurantes'], ['bar ', 'Restaurantes'], ['cafe', 'Restaurantes'], ['autoposto', 'Transporte'],
   ['amazon', 'Compras'], ['mercadolivre', 'Compras'], ['mercado livre', 'Compras'], ['shopee', 'Compras'], ['metro', 'Transporte'],
 ];
 

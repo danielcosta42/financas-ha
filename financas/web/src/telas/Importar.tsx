@@ -98,8 +98,8 @@ export function Importar({ ctx }: { ctx: Ctx }) {
           >
             <Icone nome="arquivo" tamanho={28} />
             <b>{ocupado ? 'Lendo…' : 'Solte o arquivo aqui ou toque para escolher'}</b>
-            <span className="mudo">.csv, .ofx ou .txt · até 10 MB</span>
-            <input ref={input} type="file" accept=".csv,.ofx,.txt,text/csv" hidden onChange={e => { const f = e.target.files?.[0]; if (f) enviar(f); e.target.value = ''; }} />
+            <span className="mudo">.csv, .ofx, .txt ou fatura do Inter em PDF · até 10 MB</span>
+            <input ref={input} type="file" accept=".csv,.ofx,.txt,.pdf,text/csv,application/pdf" hidden onChange={e => { const f = e.target.files?.[0]; if (f) enviar(f); e.target.value = ''; }} />
           </div>
           {ctx.estado.pasta && <p className="mudo pequeno">Também dá pra soltar o arquivo na pasta compartilhada <code>{ctx.estado.pasta}/{'<dono> - <conta>'}</code> depois da primeira importação pelo painel.</p>}
         </section>
@@ -109,7 +109,7 @@ export function Importar({ ctx }: { ctx: Ctx }) {
         <section className="card">
           <div className="sh">
             <h2>Conferir antes de importar</h2>
-            <span className="m">{previa.nome} · {previa.formato.toUpperCase()}{perfil?.presetNome ? ` · ${perfil.presetNome}` : ''}</span>
+            <span className="m">{previa.nome} · {previa.formato.toUpperCase()}{perfil?.presetNome ? ` · ${perfil.presetNome}` : ''}{previa.banco ? ` · ${previa.banco}` : ''}</span>
           </div>
 
           {previa.formato === 'csv' && perfil && <Mapeamento previa={previa} perfil={perfil} mudar={mudarPerfil} />}
