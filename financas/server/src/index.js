@@ -9,7 +9,6 @@ import { abrirBanco, transacao, semearPessoas } from './db.js';
 import { decodificar, ehOfx, lerOfx, detectarDelimitador, lerCsvBruto, sugerirPerfil, aplicarPerfil, PRESETS } from './parsers.js';
 import { importar, registrarCarteira, aplicarRegrasSemCategoria, resumo } from './servico.js';
 import { escutarEvento, publicarResumo, haDisponivel, listarNotificadores } from './ha.js';
-import { ehPdf, lerPdf } from './pdf.js';
 import { iaDisponivel, estadoIa, sugerirCategorias, aceitarSugestoes, recusarSugestao, comentarMes } from './ia.js';
 
 const DEV = Boolean(process.env.FINANCAS_DEV);
@@ -47,7 +46,11 @@ const atualizarHa = () => {
 
 // ---------- leitura de arquivo ----------
 async function ler(buf, nome) {
-  if (ehPdf(buf)) return { ...(await lerPdf(buf)), nome };
+  // pdfjs só é carregado quando chega um PDF: se algo nele falhar, o resto do app segue de pé.
+  if (buf.length > 4 && buf.subarray(0, 5).toString('latin1') === '%PDF-') {
+    const { lerPdf } = await import('./pdf.js');
+    return { ...(await lerPdf(buf)), nome };
+  }
   const txt = decodificar(buf);
   if (ehOfx(txt)) return { formato: 'ofx', linhas: lerOfx(txt), nome };
   const delim = detectarDelimitador(txt);

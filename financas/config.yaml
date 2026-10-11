@@ -1,5 +1,5 @@
 name: Finanças
-version: "0.3.0"
+version: "0.3.1"
 slug: financas
 description: Finanças da casa — importação de extratos CSV/OFX, categorias e resumo no Home Assistant
 url: https://github.com/danielcosta42/financas-ha
