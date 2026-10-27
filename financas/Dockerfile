@@ -1,4 +1,5 @@
-# syntax=docker/dockerfile:1
+# Sem "# syntax=docker/dockerfile:1": essa linha faz o build baixar o frontend do BuildKit do Docker Hub,
+# que quebra na VM do HA ("frontend grpc server closed unexpectedly"). O frontend embutido basta para este arquivo.
 FROM node:22-alpine AS web
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
