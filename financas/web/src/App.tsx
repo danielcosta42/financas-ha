@@ -6,9 +6,10 @@ import { Lancamentos } from './telas/Lancamentos';
 import { Contas } from './telas/Contas';
 import { Categorias } from './telas/Categorias';
 import { Pessoas } from './telas/Pessoas';
+import { Faturas } from './telas/Faturas';
 import { Icone } from './ui';
 
-export type Aba = 'resumo' | 'importar' | 'lancamentos' | 'contas' | 'pessoas' | 'categorias';
+export type Aba = 'resumo' | 'faturas' | 'importar' | 'lancamentos' | 'contas' | 'pessoas' | 'categorias';
 export interface Ctx {
   estado: Estado; contas: Conta[]; categorias: Categoria[];
   recarregar: () => Promise<void>; ir: (a: Aba, filtro?: Record<string, string>) => void; filtro: Record<string, string>;
@@ -16,6 +17,7 @@ export interface Ctx {
 
 const ABAS: { id: Aba; nome: string; icone: string }[] = [
   { id: 'resumo', nome: 'Resumo', icone: 'grafico' },
+  { id: 'faturas', nome: 'Faturas', icone: 'cartao' },
   { id: 'importar', nome: 'Importar', icone: 'upload' },
   { id: 'lancamentos', nome: 'Lançamentos', icone: 'lista' },
   { id: 'contas', nome: 'Contas', icone: 'carteira' },
@@ -57,6 +59,7 @@ export function App() {
       </nav>
       <main className="conteudo">
         {aba === 'resumo' && <Resumo ctx={ctx} />}
+        {aba === 'faturas' && <Faturas ctx={ctx} />}
         {aba === 'importar' && <Importar ctx={ctx} />}
         {aba === 'lancamentos' && <Lancamentos ctx={ctx} />}
         {aba === 'contas' && <Contas ctx={ctx} />}

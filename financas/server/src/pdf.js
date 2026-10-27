@@ -4,8 +4,24 @@ import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 export const ehPdf = buf => buf.length > 4 && buf.subarray(0, 5).toString('latin1') === '%PDF-';
 
 // Junta os pedaços de texto que estão na mesma altura; espaço grande vira "   " (separador de coluna).
-export async function linhasDoPdf(buf) {
-  const doc = await getDocument({ data: new Uint8Array(buf), useSystemFonts: false, isEvalSupported: false, disableFontFace: true, verbosity: 0 }).promise;
+// Faturas que vêm com senha (muitos bancos usam parte do CPF): tenta sem senha e depois cada senha configurada.
+async function abrirPdf(buf, senhas = []) {
+  const base = { useSystemFonts: false, isEvalSupported: false, disableFontFace: true, verbosity: 0 };
+  let ultimoErro = null;
+  for (const password of [undefined, ...senhas.filter(Boolean)]) {
+    try { return await getDocument({ ...base, data: new Uint8Array(buf), ...(password ? { password } : {}) }).promise; }
+    catch (e) {
+      if (e?.name !== 'PasswordException') throw e;
+      ultimoErro = e;
+    }
+  }
+  const err = new Error(senhas.length ? 'o PDF tem senha e nenhuma das senhas configuradas abriu' : 'o PDF tem senha: configure em pdf_senhas no add-on');
+  err.senha = true; err.causa = ultimoErro;
+  throw err;
+}
+
+export async function linhasDoPdf(buf, senhas = []) {
+  const doc = await abrirPdf(buf, senhas);
   const linhas = [];
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);
@@ -53,11 +69,12 @@ const RE_PARCELA = /\(Parcela (\d+) de (\d+)\)/i;
 
 export function lerFaturaInter(linhas) {
   const saida = [], erros = [];
-  let cartao = null, vencimento = null;
+  let cartao = null, vencimento = null, total = null;
   for (const l of linhas) {
     const c = l.match(/^CART[ÃA]O\s+\d{4}\*+(\d{4})/i);
     if (c) { cartao = c[1]; continue; }
     if (!vencimento) { const v = l.match(/Data de Vencimento\s+(\d{2})\/(\d{2})\/(\d{4})/i) || l.match(/\*{4}\d{4}\s+(\d{2})\/(\d{2})\/(\d{4})/); if (v) vencimento = `${v[3]}-${v[2]}-${v[1]}`; }
+    if (total === null) { const t = l.match(/total (?:da|desta) fatura\s+(?:-\s+)?R\$\s*([\d.]+,\d{2})/i) || l.match(/valor (?:total|da fatura)\s+R\$\s*([\d.]+,\d{2})/i); if (t) total = valorBr(t[1]); }
     const m = l.match(RE_LINHA);
     if (!m) {
       if (/^\d{1,2} de [a-z]{3}\.? \d{4}/i.test(l)) erros.push({ linha: 0, conteudo: l });
@@ -72,17 +89,21 @@ export function lerFaturaInter(linhas) {
     const valor = credito ? valorBr(val) : -valorBr(val);
     saida.push({ data, descricao, detalhe: [cartao ? `Cartão final ${cartao}` : null, p ? `parcela ${Number(p[1])}/${Number(p[2])}` : null].filter(Boolean).join(' · ') || null, valor, id_externo: null });
   }
-  return { linhas: saida, erros, vencimento };
+  // Sem o total impresso, estima pelos lançamentos (compras menos créditos).
+  if (total === null && saida.length) total = Math.round(-saida.reduce((a, x) => a + x.valor, 0) * 100) / 100;
+  return { linhas: saida, erros, vencimento, total, cartao };
 }
 
 // Ponto de entrada: devolve { formato:'pdf', linhas, banco } ou lança erro legível.
-export async function lerPdf(buf) {
-  const linhas = await linhasDoPdf(buf);
+export async function lerPdf(buf, { senhas = [] } = {}) {
+  const linhas = await linhasDoPdf(buf, senhas);
   if (!linhas.length) throw new Error('o PDF não tem texto (é uma imagem escaneada?)');
   if (ehFaturaInter(linhas)) {
     const r = lerFaturaInter(linhas);
     if (!r.linhas.length) throw new Error('reconheci a fatura do Inter, mas não achei lançamentos');
     return { formato: 'pdf', banco: 'Inter · fatura do cartão', ...r };
   }
-  throw new Error('por enquanto só leio PDF da fatura do cartão Inter; para outros bancos use CSV ou OFX');
+  const e = new Error('por enquanto só leio PDF da fatura do cartão Inter; para outros bancos use CSV ou OFX');
+  e.desconhecido = true; e.texto = linhas.join('\n');
+  throw e;
 }

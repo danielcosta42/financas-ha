@@ -1,0 +1,42 @@
+configuration:
+  pessoas:
+    name: Pessoas
+    description: Perfis criados na primeira vez que o app abre.
+  pasta_de_entrada:
+    name: Pasta de entrada
+    description: Extratos soltos aqui (uma subpasta por conta) são importados sozinhos.
+  ia_entidade:
+    name: IA principal
+    description: Entidade ai_task usada para sugerir categorias e ler faturas (padrão o Ollama da casa).
+  ia_reserva:
+    name: IA reserva
+    description: Usada se a principal não responder.
+  ia_automatica:
+    name: IA depois de importar
+    description: Sugere categorias e comenta o mês sozinha depois de cada importação.
+  email_servidor:
+    name: Servidor IMAP
+    description: imap.gmail.com para Gmail.
+  email_porta:
+    name: Porta IMAP
+  email_usuario:
+    name: E-mail
+    description: Conta onde chegam as faturas dos cartões. Deixe vazio para não ler e-mail.
+  email_senha_de_app:
+    name: Senha de app
+    description: No Gmail, crie em myaccount.google.com/apppasswords (precisa da verificação em duas etapas). Não use a senha normal da conta.
+  email_pasta:
+    name: Pasta do e-mail
+    description: INBOX lê a caixa de entrada; no Gmail, "[Gmail]/Todos os e-mails" inclui os arquivados.
+  email_dias:
+    name: Dias para trás
+    description: Quantos dias de e-mail olhar em cada verificação.
+  email_intervalo_min:
+    name: Intervalo (min)
+    description: De quanto em quanto tempo verificar o e-mail.
+  pdf_senhas:
+    name: Senhas dos PDFs
+    description: Senhas usadas pelos bancos para abrir o PDF da fatura (muitos usam parte do CPF). Tento cada uma.
+  pasta_faturas:
+    name: Pasta das faturas
+    description: Onde guardo uma cópia dos PDFs (padrão /share/financas/faturas).

@@ -8,8 +8,10 @@ import { fileURLToPath } from 'node:url';
 import { abrirBanco, transacao, semearPessoas } from './db.js';
 import { decodificar, ehOfx, lerOfx, detectarDelimitador, lerCsvBruto, sugerirPerfil, aplicarPerfil, PRESETS } from './parsers.js';
 import { importar, registrarCarteira, aplicarRegrasSemCategoria, resumo } from './servico.js';
-import { escutarEvento, publicarResumo, haDisponivel, listarNotificadores } from './ha.js';
-import { iaDisponivel, estadoIa, sugerirCategorias, aceitarSugestoes, recusarSugestao, comentarMes } from './ia.js';
+import { escutarEvento, publicarResumo, publicarFaturas, dispararEvento, haDisponivel, listarNotificadores } from './ha.js';
+import { iaDisponivel, estadoIa, sugerirCategorias, aceitarSugestoes, recusarSugestao, comentarMes, gerarTexto } from './ia.js';
+import { listarFaturas, resumoFaturas, conciliarFaturas } from './faturas.js';
+import { verificarEmail, estadoEmail } from './email.js';
 
 const DEV = Boolean(process.env.FINANCAS_DEV);
 const DADOS = process.env.FINANCAS_DATA || '/data';
@@ -23,6 +25,19 @@ const IA = {
   reserva: opcoes.ia_reserva || null,
   automatica: opcoes.ia_automatica !== false,
 };
+
+const EMAIL = {
+  servidor: opcoes.email_servidor || 'imap.gmail.com',
+  porta: opcoes.email_porta || 993,
+  usuario: opcoes.email_usuario || '',
+  senha: opcoes.email_senha_de_app || '',
+  pasta: opcoes.email_pasta || 'INBOX',
+  dias: opcoes.email_dias || 60,
+  intervaloMin: Math.max(10, Number(opcoes.email_intervalo_min) || 30),
+  senhasPdf: (opcoes.pdf_senhas || []).filter(Boolean),
+  pastaPdf: opcoes.pasta_faturas || (PASTA ? join(dirname(PASTA), 'faturas') : null),
+};
+estadoEmail.configurado = Boolean(EMAIL.usuario && EMAIL.senha);
 
 const db = abrirBanco(DADOS);
 semearPessoas(db, PESSOAS);
@@ -41,7 +56,11 @@ const quem = req => req.headers['x-remote-user-display-name'] || req.headers['x-
 let publicando = null;
 const atualizarHa = () => {
   clearTimeout(publicando);
-  publicando = setTimeout(() => publicarResumo(resumo(db, mesAtual()), app.log), 1500);
+  publicando = setTimeout(async () => {
+    conciliarFaturas(db);
+    await publicarResumo(resumo(db, mesAtual()), app.log);
+    await publicarFaturas(resumoFaturas(db), estadoEmail, app.log);
+  }, 1500);
 };
 
 // ---------- leitura de arquivo ----------
@@ -69,7 +88,53 @@ const uploads = new Map(); // token → { arq, criado }
 setInterval(() => { for (const [k, v] of uploads) if (Date.now() - v.criado > 30 * 6e4) uploads.delete(k); }, 6e4).unref();
 
 // ---------- API ----------
-app.get('/api/estado', async () => ({ pessoas: donos(), donos: donos(), ha: haDisponivel(), ia: iaDisponivel() ? IA.entidade : null, presets: PRESETS.map(p => ({ id: p.id, nome: p.nome })), pasta: PASTA }));
+app.get('/api/estado', async () => ({ pessoas: donos(), donos: donos(), ha: haDisponivel(), ia: iaDisponivel() ? IA.entidade : null, presets: PRESETS.map(p => ({ id: p.id, nome: p.nome })), pasta: PASTA, email: estadoEmail.configurado }));
+
+// ---------- faturas do e-mail ----------
+async function checarEmail() {
+  const r = await verificarEmail(db, EMAIL, {
+    ia: iaDisponivel() ? { ...IA, gerarTexto } : null, log: app.log,
+    aoMudar: f => {
+      dispararEvento('financas_fatura_nova', f, app.log);
+      if (f.importada) iaDepoisDeImportar();
+    },
+  });
+  atualizarHa();
+  return r;
+}
+app.get('/api/faturas', async req => ({ email: { ...estadoEmail, usuario: EMAIL.usuario || null, servidor: EMAIL.servidor, intervaloMin: EMAIL.intervaloMin }, faturas: listarFaturas(db, { todas: req.query?.todas === '1' }) }));
+app.post('/api/faturas/verificar', async (req, reply) => {
+  if (!estadoEmail.configurado) return reply.code(400).send({ erro: 'configure email_usuario e email_senha_de_app nas opções do add-on' });
+  return checarEmail();
+});
+app.patch('/api/faturas/:id', async (req, reply) => {
+  const f = db.prepare('SELECT * FROM faturas WHERE id = ?').get(req.params.id);
+  if (!f) return reply.code(404).send({ erro: 'fatura não encontrada' });
+  const b = req.body || {};
+  const status = ['aberta', 'paga', 'ignorada'].includes(b.status) ? b.status : f.status;
+  const valor = b.valor === undefined ? f.valor : (b.valor === null || b.valor === '' ? null : Number(b.valor));
+  const venc = b.vencimento === undefined ? f.vencimento : (b.vencimento || null);
+  const conta = b.conta_id === undefined ? f.conta_id : (b.conta_id || null);
+  db.prepare('UPDATE faturas SET status = ?, valor = ?, vencimento = ?, conta_id = ?, paga_por = CASE WHEN ? = \'aberta\' THEN NULL ELSE paga_por END WHERE id = ?')
+    .run(status, valor, venc, conta, status, f.id);
+  atualizarHa();
+  return { ok: true };
+});
+// Importa os lançamentos do PDF guardado numa conta (quando não deu para escolher a conta sozinho).
+app.post('/api/faturas/:id/importar', async (req, reply) => {
+  const f = db.prepare('SELECT * FROM faturas WHERE id = ?').get(req.params.id);
+  const contaId = Number(req.body?.conta_id) || f?.conta_id;
+  if (!f?.pdf || !existsSync(f.pdf)) return reply.code(400).send({ erro: 'não tenho o PDF dessa fatura' });
+  if (!contaId) return reply.code(400).send({ erro: 'escolha a conta do cartão' });
+  try {
+    const { lerPdf } = await import('./pdf.js');
+    const r = await lerPdf(readFileSync(f.pdf), { senhas: EMAIL.senhasPdf });
+    const imp = importar(db, { contaId, linhas: r.linhas, arquivo: basename(f.pdf), formato: 'pdf', quem: quem(req) || 'e-mail' });
+    db.prepare('UPDATE faturas SET conta_id = ?, importacao_id = ?, erro = NULL WHERE id = ?').run(contaId, imp.importacaoId, f.id);
+    atualizarHa(); iaDepoisDeImportar();
+    return imp;
+  } catch (e) { return reply.code(400).send({ erro: e.message }); }
+});
 
 // ---------- IA ----------
 let comentando = null;
@@ -379,5 +444,10 @@ async function varrerPasta() {
 }
 setInterval(varrerPasta, 60e3).unref();
 varrerPasta();
+
+if (estadoEmail.configurado) {
+  setInterval(() => checarEmail().catch(e => app.log.warn({ err: e.message }, 'e-mail')), EMAIL.intervaloMin * 6e4).unref();
+  setTimeout(() => checarEmail().catch(e => app.log.warn({ err: e.message }, 'e-mail')), 20e3).unref();
+}
 
 await app.listen({ port: Number(process.env.PORT || 8099), host: '0.0.0.0' });

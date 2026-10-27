@@ -148,6 +148,30 @@ function migrar(db) {
     origem TEXT,
     criado_em TEXT NOT NULL DEFAULT (datetime('now'))
   );`);
+  // v0.4: faturas achadas no e-mail.
+  db.exec(`CREATE TABLE IF NOT EXISTS faturas (
+    id INTEGER PRIMARY KEY,
+    mensagem_id TEXT NOT NULL UNIQUE,
+    banco TEXT,
+    remetente TEXT,
+    assunto TEXT,
+    recebido_em TEXT,
+    valor REAL,
+    vencimento TEXT,
+    cartao_final TEXT,
+    origem_valor TEXT,
+    conta_id INTEGER REFERENCES contas(id) ON DELETE SET NULL,
+    importacao_id INTEGER REFERENCES importacoes(id) ON DELETE SET NULL,
+    pdf TEXT,
+    status TEXT NOT NULL DEFAULT 'aberta' CHECK (status IN ('aberta','paga','ignorada')),
+    paga_por INTEGER REFERENCES lancamentos(id) ON DELETE SET NULL,
+    erro TEXT,
+    criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS emails_vistos (
+    mensagem_id TEXT PRIMARY KEY,
+    visto_em TEXT NOT NULL DEFAULT (datetime('now'))
+  );`);
   // Categoria nova padrão (bases antigas não têm).
   if (db.prepare('SELECT COUNT(*) AS n FROM categorias').get().n > 0) {
     db.prepare("INSERT OR IGNORE INTO categorias (nome, grupo, cor, fora_do_total) VALUES ('Seguros e tarifas','Pessoal','#8089a7',0)").run();

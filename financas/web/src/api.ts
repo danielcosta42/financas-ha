@@ -20,7 +20,7 @@ export const api = {
 };
 
 export type Dono = string;
-export interface Estado { pessoas: string[]; donos: string[]; ha: boolean; ia: string | null; presets: { id: string; nome: string }[]; pasta: string | null }
+export interface Estado { pessoas: string[]; donos: string[]; ha: boolean; ia: string | null; presets: { id: string; nome: string }[]; pasta: string | null; email?: boolean }
 export interface Perfil {
   preset?: string | null; presetNome?: string | null; linhaCabecalho: number;
   colData: number; colDescricao: number; colValor: number; colDebito: number; colCredito: number; colId: number;
@@ -59,3 +59,10 @@ export const diasDesde = (sqliteUtc: string | null) => (sqliteUtc ? Math.floor((
 export const mesAtual = () => new Date(Date.now() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 7);
 export const nomeMes = (m: string) => { const t = new Date(`${m}-15T12:00:00`).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }); return t.charAt(0).toUpperCase() + t.slice(1); };
 export const mesAnterior = (m: string, d = -1) => { const [y, mm] = m.split('-').map(Number); const t = new Date(y, mm - 1 + d, 15); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}`; };
+export interface Fatura {
+  id: number; mensagem_id: string; banco: string | null; remetente: string | null; assunto: string | null; recebido_em: string | null;
+  valor: number | null; vencimento: string | null; cartao_final: string | null; origem_valor: 'regra' | 'pdf' | 'ia' | null;
+  conta_id: number | null; conta: string | null; dono: string | null; importacao_id: number | null; pdf: string | null;
+  status: 'aberta' | 'paga' | 'ignorada'; paga_por: number | null; erro: string | null; criado_em: string;
+}
+export interface EstadoEmail { configurado: boolean; rodando: boolean; ultima: string | null; erro: string | null; vistos: number; novas: number; usuario: string | null; servidor: string; intervaloMin: number }

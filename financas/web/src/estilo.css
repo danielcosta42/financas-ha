@@ -190,3 +190,4 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--ciano); }
 .comentario { font-size: 15px; line-height: 1.55; color: var(--t1); margin: 0 0 10px; }
 .comentario-rodape { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--t2); font-size: 12px; flex-wrap: wrap; }
 .recorrente-sub { color: var(--t2); font-size: 12px; }
+.passos { margin: 8px 0 12px; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; color: var(--t2); font-size: 13px; }

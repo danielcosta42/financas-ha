@@ -73,6 +73,24 @@ export async function publicarResumo(r, log) {
   }, log);
 }
 
+export async function dispararEvento(tipo, dados, log) {
+  if (!TOKEN) return;
+  try {
+    await fetch(`${API}/events/${tipo}`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify(dados) });
+  } catch (e) { log?.warn({ err: e.message, tipo }, 'falha ao disparar evento'); }
+}
+
+// sensor.financas_proxima_fatura: valor da próxima a vencer; atributos com todas em aberto.
+export async function publicarFaturas(r, email, log) {
+  const p = r.proxima;
+  await publicarEstado('sensor.financas_proxima_fatura', p?.valor != null ? p.valor.toFixed(2) : (p ? 'unknown' : '0'), {
+    unit_of_measurement: 'R$', device_class: 'monetary', icon: 'mdi:credit-card-clock-outline', friendly_name: 'Finanças · próxima fatura',
+    banco: p?.banco || null, conta: p?.conta || null, cartao_final: p?.cartao_final || null, vencimento: p?.vencimento || null, dias_para_vencer: p?.dias ?? null,
+    total_em_aberto: r.total, abertas: r.abertas.map(f => ({ banco: f.banco, valor: f.valor, vencimento: f.vencimento, dias: f.dias })),
+    email_configurado: email.configurado, email_ultima_verificacao: email.ultima, email_erro: email.erro,
+  }, log);
+}
+
 export async function listarNotificadores() {
   if (!TOKEN) return [];
   try {
