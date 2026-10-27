@@ -45,6 +45,11 @@
 - Fatura nova achada no e-mail → `notify.<serviço>` do dono da conta do cartão (ou de todos os
   perfis com aviso, se a fatura não tem conta).
 
+### Build (v0.5.1, #3)
+- O Dockerfile não declara `# syntax=docker/dockerfile:1`: a diretiva baixa o frontend do BuildKit do Docker
+  Hub, e a versão atual quebra na VM do HA ("frontend grpc server closed unexpectedly", mesma família do SIGILL
+  da v0.3.1). Só recursos que o frontend embutido entende (multi-stage, `COPY --from`).
+
 ## Fora do escopo
 - Novos layouts de PDF além do Inter. Conciliação por conta/cartão (segue só por valor e data).
 
