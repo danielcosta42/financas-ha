@@ -1,37 +1,42 @@
 // Faturas de cartão achadas no e-mail: reconhece o banco, tira valor e vencimento do texto
 // (regras primeiro, IA só quando as regras não acham) e concilia com o pagamento no extrato.
-import { normaliza } from './parsers.js';
+import { normaliza, valorNoTexto } from './parsers.js';
 
-// remetente: domínio/nome que o banco usa; o assunto precisa falar de fatura.
+// remetente: domínio/nome que o banco usa. Domínio curto vai ancorado em "@" ou "." (winter.co não é o Inter).
 export const BANCOS = [
-  { id: 'inter', nome: 'Inter', remetente: /inter\.co\b|bancointer|banco inter/i },
+  { id: 'inter', nome: 'Inter', remetente: /[@.]inter\.co\b|bancointer|banco inter/i },
   { id: 'nubank', nome: 'Nubank', remetente: /nubank/i },
-  { id: 'itau', nome: 'Itaú', remetente: /itau|ita[uú] ?card|iti\b/i },
+  { id: 'itau', nome: 'Itaú', remetente: /itau|ita[uú] ?card|[@.]iti\.com/i },
   { id: 'bradesco', nome: 'Bradesco', remetente: /bradesco/i },
   { id: 'santander', nome: 'Santander', remetente: /santander/i },
   { id: 'c6', nome: 'C6 Bank', remetente: /c6bank|c6 bank/i },
-  { id: 'btg', nome: 'BTG', remetente: /btg/i },
+  { id: 'btg', nome: 'BTG', remetente: /[@.]btg|btg pactual/i },
   { id: 'xp', nome: 'XP', remetente: /\bxp(inc|investimentos|\.com)|cartaoxp/i },
   { id: 'mercadopago', nome: 'Mercado Pago', remetente: /mercadopago|mercado pago/i },
   { id: 'picpay', nome: 'PicPay', remetente: /picpay/i },
   { id: 'caixa', nome: 'Caixa', remetente: /caixa\.gov|caixa econ/i },
-  { id: 'bb', nome: 'Banco do Brasil', remetente: /bb\.com\.br|banco do brasil/i },
+  { id: 'bb', nome: 'Banco do Brasil', remetente: /[@.]bb\.com\.br\b|banco do brasil/i },
   { id: 'porto', nome: 'Porto Bank', remetente: /portoseguro|porto bank|portobank/i },
-  { id: 'neon', nome: 'Neon', remetente: /neon\.com|banco neon/i },
+  { id: 'neon', nome: 'Neon', remetente: /[@.]neon\.com|banco neon/i },
   { id: 'will', nome: 'Will Bank', remetente: /willbank|will bank/i },
   { id: 'pan', nome: 'Banco Pan', remetente: /bancopan|banco pan/i },
   { id: 'sicredi', nome: 'Sicredi', remetente: /sicredi/i },
-  { id: 'nomad', nome: 'Nomad', remetente: /nomad/i },
+  { id: 'nomad', nome: 'Nomad', remetente: /[@.]nomadglobal\.com|banco nomad/i },
 ];
 
 const RE_ASSUNTO_FATURA = /fatura/i;
 // Assuntos que falam de fatura mas não são a fatura (propaganda, parcelamento, confirmação de pagamento).
 const RE_ASSUNTO_NAO = /parcel(e|ar|amento)|antecip|desconto|cashback|oferta|empr[eé]stimo|pagamento (foi )?(recebido|confirmado|realizado)|recebemos (o )?(seu )?pagamento|limite/i;
 
+export const bancoDoRemetente = remetente => BANCOS.find(b => b.remetente.test(remetente)) || null;
+
 export function detectarBanco({ remetente = '', assunto = '' }) {
   if (!RE_ASSUNTO_FATURA.test(assunto) || RE_ASSUNTO_NAO.test(assunto)) return null;
-  return BANCOS.find(b => b.remetente.test(remetente)) || null;
+  return bancoDoRemetente(remetente);
 }
+
+// Data de hoje no fuso do add-on (o TZ que o Supervisor passa), não em UTC.
+export const hojeLocal = () => new Date(Date.now() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 10);
 
 const MESES = { jan: 1, fev: 2, mar: 3, abr: 4, mai: 5, jun: 6, jul: 7, ago: 8, set: 9, out: 10, nov: 11, dez: 12 };
 const valorBr = s => Number(String(s).replace(/\./g, '').replace(',', '.'));
@@ -100,7 +105,7 @@ export async function extrairComIa(texto, recebidoEm, gerarTexto, opcoes) {
   const bruto = String(o.valor ?? '').replace(/[^\d.,]/g, '');
   if (bruto) {
     const v = valorBr(bruto.includes(',') ? bruto : bruto.replace('.', ','));
-    if (v > 0 && v < 1e6 && trecho.replace(/\./g, '').includes(String(Math.floor(v)))) valor = v;
+    if (v > 0 && v < 1e6 && valorNoTexto(v, trecho)) valor = v;
   }
   let vencimento = null;
   const d = String(o.vencimento || '').match(/(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/);
@@ -139,12 +144,12 @@ export function conciliarFaturas(db) {
 
 export function listarFaturas(db, { todas = false } = {}) {
   return db.prepare(`SELECT f.*, c.nome AS conta, c.dono FROM faturas f LEFT JOIN contas c ON c.id = f.conta_id
-    ${todas ? '' : "WHERE f.status != 'ignorada' AND (f.status = 'aberta' OR f.criado_em >= datetime('now','-120 day'))"}
+    ${todas ? '' : "WHERE f.status != 'ignorada' AND (f.status = 'aberta' OR COALESCE(f.recebido_em, f.criado_em) >= datetime('now','-120 day'))"}
     ORDER BY CASE f.status WHEN 'aberta' THEN 0 ELSE 1 END, CASE WHEN f.status = 'aberta' THEN COALESCE(f.vencimento, '9999') END, COALESCE(f.vencimento, f.recebido_em) DESC LIMIT 200`).all();
 }
 
 // Para o sensor do HA: a próxima a vencer e o total em aberto.
-export function resumoFaturas(db, hoje = new Date().toISOString().slice(0, 10)) {
+export function resumoFaturas(db, hoje = hojeLocal()) {
   const abertas = db.prepare("SELECT f.*, c.nome AS conta FROM faturas f LEFT JOIN contas c ON c.id = f.conta_id WHERE f.status = 'aberta' ORDER BY COALESCE(f.vencimento, '9999') , f.recebido_em").all();
   const dias = v => (v ? Math.round((Date.parse(v + 'T12:00:00Z') - Date.parse(hoje + 'T12:00:00Z')) / 864e5) : null);
   const itens = abertas.map(f => ({ id: f.id, banco: f.banco, conta: f.conta, cartao_final: f.cartao_final, valor: f.valor, vencimento: f.vencimento, dias: dias(f.vencimento) }));

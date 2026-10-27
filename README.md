@@ -2,18 +2,23 @@
 
 App de finanças pessoais que roda dentro do Home Assistant, abre na barra lateral e guarda tudo num SQLite no próprio servidor.
 
-## O que faz (v0.1)
+## O que faz
 
 - **Importa extratos** CSV e OFX de qualquer banco. Detecta delimitador, codificação, linha do cabeçalho e colunas; reconhece o Nubank (cartão e conta) sozinho. O mapeamento fica salvo por conta.
 - **Não duplica**: reimportar um período que se sobrepõe só traz o que é novo.
 - **Categoriza** com regras ("descrição contém …"); ao categorizar um lançamento, oferece criar a regra.
 - **Concilia a Carteira do iPhone**: escuta o evento `financas_compra` do HA e casa a compra com o lançamento do extrato (mesmo valor, até 3 dias depois).
 - **Resumo do mês**: saídas, entradas, por categoria, por dono (Daniel, Naomi, Casa, Ferion) e contas com extrato atrasado.
+- **Faturas e avisos de transação do e-mail** (IMAP, somente leitura): ver v0.4 e v0.5 abaixo.
 - **Sensores no HA**: `sensor.financas_saidas_do_mes`, `sensor.financas_entradas_do_mes`, `sensor.financas_sem_categoria`, `sensor.financas_ultima_importacao` (com `contas_atrasadas`).
 - **Pasta de entrada** (opcional): `/share/financas/entrada/<Dono> - <Conta>/` — um arquivo solto ali é importado com o mapeamento salvo e movido para `importados/`.
 
 ## Novidades
 
+- **v0.5 — transações pelo e-mail e fatura do Inter certa**: os avisos que os bancos mandam por e-mail (compra aprovada, Pix e transferência enviados e recebidos, boleto pago, débito automático, estorno) viram transações **pendentes**, como as da Carteira do iPhone: contam nas saídas e entradas do mês até o extrato chegar e se conciliam sozinhas com o lançamento de mesmo valor (a mesma compra avisada pela Carteira e pelo e-mail entra uma vez só). Valor, sentido, estabelecimento, cartão e hora saem por regras; a IA da casa só entra quando falta o valor. Lista na tela **Faturas**, com remoção do que for lido errado. Botão **Carregar histórico** lê a caixa inteira uma vez (faturas e transações antigas, sem avisar no celular; faturas antigas sem pagamento no extrato entram como pagas). A leitura normal agora é incremental.
+  - **Fatura do Inter em PDF**: o total vem do que a fatura imprime (totais por cartão, cabeçalho) em vez de ser estimado; antes, o pagamento da fatura anterior (crédito na lista) era descontado e o total saía muito menor. Cada cartão é conferido contra o "Total CARTÃO" impresso, e a diferença aparece como aviso na prévia e na fatura. O total impresso no PDF ganha do valor lido no texto do e-mail.
+  - **Avisos no celular**: fatura nova vai para o celular do dono da conta do cartão (campo "Avisos no celular" do perfil).
+  - Correções: add-on para na hora (sem esperar 10 s e levar SIGKILL), erros em segundo plano não derrubam mais o processo, PDF com senha também pelo painel e pela pasta de entrada, dias para vencer no fuso local, dependências sem vulnerabilidades conhecidas, prompts da IA sem dados pessoais fixos.
 - **v0.4 — faturas pelo e-mail**: lê a caixa de e-mail por IMAP (somente leitura) atrás das faturas dos cartões. Reconhece o banco pelo remetente (Inter, Nubank, Itaú, Bradesco, Santander, C6, BTG, XP, Mercado Pago, PicPay, Caixa, BB, Porto, Neon, Will, Pan, Sicredi, Nomad) e descarta propaganda e confirmação de pagamento. Valor e vencimento saem por regras; quando não acham, a IA da casa lê o texto, e o valor só é aceito se o número aparecer no e-mail. PDF anexo: guardado em `/share/financas/faturas`, e a fatura do Inter tem os lançamentos importados direto no cartão (quando há uma só conta de cartão daquele banco; senão escolhe na tela). PDF com senha: tenta as senhas de `pdf_senhas`. A fatura vira **paga** sozinha quando o extrato mostra o pagamento com o mesmo valor. Tela **Faturas**, sensor `sensor.financas_proxima_fatura` (atributos `vencimento`, `dias_para_vencer`, `abertas`, `total_em_aberto`) e evento `financas_fatura_nova` no HA.
   - Opções: `email_usuario` e `email_senha_de_app` (no Gmail, senha de app; nunca a senha da conta), `email_servidor` (imap.gmail.com), `email_pasta` (INBOX), `email_dias` (60), `email_intervalo_min` (30), `pdf_senhas`, `pasta_faturas`.
 - **v0.3.1**: corrige o add-on caindo ao iniciar (exit 132) em CPUs sem AVX — o pacote nativo opcional do pdfjs não é mais instalado.

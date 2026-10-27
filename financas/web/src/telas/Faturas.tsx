@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, brl, dataBr, type EstadoEmail, type Fatura } from '../api';
+import { api, brl, dataBr, type EstadoEmail, type Fatura, type ItemCarteira } from '../api';
 import type { Ctx } from '../App';
 import { Cabecalho, Chip, Icone, Stat, Vazio } from '../ui';
 
-const ORIGEM = { regra: 'lido do e-mail', pdf: 'lido do PDF', ia: 'lido pela IA' } as const;
+const ORIGEM = { regra: 'lido do e-mail', pdf: 'lido do PDF', ia: 'lido pela IA', manual: 'corrigido à mão' } as const;
 
 const diasAte = (iso: string | null) => (iso ? Math.round((Date.parse(`${iso}T12:00:00`) - Date.now()) / 864e5) : null);
 function prazo(f: Fatura) {
@@ -23,14 +23,33 @@ export function Faturas({ ctx }: { ctx: Ctx }) {
   const [editando, setEditando] = useState<number | null>(null);
   const [form, setForm] = useState({ valor: '', vencimento: '' });
   const [contaSel, setContaSel] = useState<Record<number, string>>({});
+  const [avisos, setAvisos] = useState<ItemCarteira[]>([]);
 
-  const carregar = useCallback(() => api.get<{ email: EstadoEmail; faturas: Fatura[] }>('faturas').then(setDados).catch(e => setErro(e.message)), []);
+  const carregar = useCallback(() => Promise.all([api.get<{ email: EstadoEmail; faturas: Fatura[] }>('faturas'), api.get<ItemCarteira[]>('carteira')])
+    .then(([d, c]) => { setDados(d); setAvisos(c); }).catch(e => setErro(e.message)), []);
   useEffect(() => { carregar(); }, [carregar]);
+  // Enquanto o e-mail está sendo lido (a carga do histórico demora), acompanha o progresso.
+  const lendo = dados?.email.rodando;
+  useEffect(() => {
+    if (!lendo) return;
+    const t = window.setInterval(carregar, 3000);
+    return () => clearInterval(t);
+  }, [lendo, carregar]);
 
   async function verificar() {
     setVerificando(true); setErro(null);
     try { await api.post('faturas/verificar'); } catch (e) { setErro((e as Error).message); }
     setVerificando(false); carregar();
+  }
+  async function carregarHistorico() {
+    if (!confirm('Ler a caixa de e-mail inteira atrás de faturas e avisos de transação dos bancos? Pode levar vários minutos; dá pra continuar usando o app.')) return;
+    setErro(null);
+    try { await api.post('faturas/historico'); } catch (e) { setErro((e as Error).message); }
+    carregar();
+  }
+  async function removerAviso(a: ItemCarteira) {
+    if (!confirm(`Remover o aviso de ${brl(a.valor)}${a.loja ? ` (${a.loja})` : ''}? Ele deixa de contar no mês.`)) return;
+    await api.del(`carteira/${a.id}`); carregar(); ctx.recarregar();
   }
   async function mudar(f: Fatura, corpo: Record<string, unknown>) { await api.patch(`faturas/${f.id}`, corpo); carregar(); }
   async function salvarEdicao(f: Fatura) {
@@ -57,10 +76,13 @@ export function Faturas({ ctx }: { ctx: Ctx }) {
     <>
       <Cabecalho
         titulo="Faturas"
-        sub={email.configurado
-          ? <>Lendo {email.usuario} a cada {email.intervaloMin} min{email.ultima && <> · última verificação {new Date(email.ultima).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</>}</>
-          : 'Faturas dos cartões achadas no seu e-mail'}
-        acoes={email.configurado && <button className="btn" onClick={verificar} disabled={verificando || email.rodando}><Icone nome="repetir" />{verificando || email.rodando ? 'Verificando…' : 'Verificar agora'}</button>}
+        sub={!email.configurado ? 'Faturas e avisos de transação achados no seu e-mail'
+          : email.rodando && email.historico ? `Lendo o histórico do e-mail… ${email.feitos}/${email.total || '?'} e-mails dos bancos · ${email.novas} faturas e ${email.transacoes} transações novas`
+          : <>Lendo {email.usuario} a cada {email.intervaloMin} min{email.ultima && <> · última verificação {new Date(email.ultima).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</>}</>}
+        acoes={email.configurado && <>
+          <button className="btn fantasma" onClick={carregarHistorico} disabled={email.rodando} title="Lê a caixa inteira: faturas e transações antigas">Carregar histórico</button>
+          <button className="btn" onClick={verificar} disabled={verificando || email.rodando}><Icone nome="repetir" />{verificando || email.rodando ? 'Verificando…' : 'Verificar agora'}</button>
+        </>}
       />
 
       {!email.configurado && (
@@ -147,6 +169,33 @@ export function Faturas({ ctx }: { ctx: Ctx }) {
         </section>
       )}
       <p className="mudo pequeno">Uma fatura vira <b>paga</b> sozinha quando o extrato da conta corrente mostra o pagamento com o mesmo valor. O Home Assistant recebe a próxima fatura em <code>sensor.financas_proxima_fatura</code>.</p>
+
+      {avisos.length > 0 && (
+        <section className="card sem-pad">
+          <div className="sh" style={{ padding: '14px 16px 0' }}><h2>Transações avisadas</h2><span className="m">e-mail do banco e Carteira do iPhone · contam no mês até o extrato chegar</span></div>
+          <table className="tabela">
+            <thead><tr><th>Data</th><th>Descrição</th><th className="esconde-cel">Origem</th><th className="dir">Valor</th><th /></tr></thead>
+            <tbody>
+              {avisos.map(a => (
+                <tr key={a.id} className={a.lancamento_id ? 'apagada' : ''}>
+                  <td className="mono">{dataBr(a.quando)}</td>
+                  <td>{a.loja || <span className="mudo">—</span>}{a.cartao && <span className="mudo"> · final {a.cartao}</span>}</td>
+                  <td className="esconde-cel mudo pequeno">{a.origem === 'email' ? `e-mail${a.banco ? ` · ${a.banco}` : ''}` : 'Carteira'}</td>
+                  <td className={`dir mono ${a.entrada ? 'pos' : 'neg'}`}>{brl(a.entrada ? a.valor : -a.valor)}</td>
+                  <td className="dir nowrap">
+                    {a.lancamento_id
+                      ? <Chip cor="#4ff0c9">no extrato</Chip>
+                      : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <span className="mudo pequeno">pendente</span>
+                          <button className="icone-btn" title="Remover aviso (lido errado ou repetido)" onClick={() => removerAviso(a)}><Icone nome="lixo" tamanho={16} /></button>
+                        </span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
     </>
   );
 }

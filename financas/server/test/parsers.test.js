@@ -124,17 +124,66 @@ test('regra: vence a que aparece primeiro; recorrentes acham cobrança repetida'
   assert.equal(rec[0].vezes, 3);
 });
 
-test('fatura do Inter (texto do PDF): compras, crédito, parcela e cartão', async () => {
+// Layout atual da fatura do Inter (dados inventados): total grande numa linha e o valor na de baixo,
+// cabeçalho com cartão · vencimento · valor, dois cartões com "Total CARTÃO", pagamento da fatura anterior como crédito.
+const FATURA_INTER = [
+  'Resumo da fatura', 'Olá, Fulano! A sua fatura chegou!',
+  'Total da sua fatura   Limite de crédito total', 'R$ 1.500,00   R$ 5.000,00', 'Este é o valor que você precisa pagar nesse mês', 'Data de Vencimento', '15/10/2026',
+  'Pagamento mínimo: R$ 225,00', 'Valor total financiado   R$ 1.275,00', 'Total a pagar   R$ 1.490,00',
+  'FULANO DE TAL   VENCIMENTO   VALOR TOTAL', '1234****1111   15/10/2026   R$1.500,00',
+  '1 + 2 de R$ 600,00   R$ 1.800,00   1 + 8 de R$ 250,00   R$ 2.000,00',
+  'Despesas do mês   R$ 1.500,00',
+  'Despesas da fatura', 'CARTÃO 1234****1111', 'Data   Movimentação   Beneficiário   Valor',
+  '08 de set. 2026   PADARIA BOA   -   R$ 10,00',
+  '08 de set. 2026   PADARIA BOA   -   R$ 10,00',
+  '15 de set. 2026   PAGTO DEBITO AUTOMATICO   -   + R$ 900,00',
+  '24 de set. 2026   NABU CASA - HA CLOUD   -   R$ 35,35', 'Valor e símbolo da moeda de origem: 6,50 USD', 'Cotação do dólar americano: R$ 5,4380',
+  'Total CARTÃO 1234****1111   R$ 55,35',
+  'CARTÃO 1234****2222',
+  '19 de fev. 2026   LOJA X (Parcela 08 de 10)   -   R$ 400,00',
+  '16 de set. 2026   ALUGUEL   -   R$ 1.044,65',
+  'Total CARTÃO 1234****2222   R$ 1.444,65',
+  'Próxima fatura', 'LOJA X (Parcela 09 de 10)   R$ 400,00', 'www.bancointer.com.br',
+];
+
+test('fatura do Inter (texto do PDF): total impresso, crédito do pagamento, parcela e cartões', async () => {
   const { lerFaturaInter, ehFaturaInter } = await import('../src/pdf.js');
-  const linhas = ['Resumo da fatura', 'Data de Vencimento 15/07/2026', 'Despesas da fatura', 'CARTÃO 5364****6986', 'Data   Movimentação   Beneficiário   Valor',
-    '15 de jun. 2026   PAGTO DEBITO AUTOMATICO   -   + R$ 6.939,18', '15 de jun. 2026   QUINTOANDAR   -   R$ 2.854,34',
-    'Total CARTÃO 5364****6986   R$ 2.854,34', 'CARTÃO 5364****7172', '19 de fev. 2026   MLP *KaBuM-KaBuM (Parcela 05 de 10)   -   R$ 810,89', 'www.bancointer.com.br'];
-  assert.ok(ehFaturaInter(linhas));
-  const r = lerFaturaInter(linhas);
-  assert.equal(r.vencimento, '2026-07-15');
-  assert.equal(r.linhas.length, 3);
-  assert.equal(r.linhas[0].valor, 6939.18);
-  assert.equal(r.linhas[1].valor, -2854.34);
-  assert.equal(r.linhas[2].data, '2026-06-19');
-  assert.equal(r.linhas[2].detalhe, 'Cartão final 7172 · parcela 5/10');
+  assert.ok(ehFaturaInter(FATURA_INTER));
+  const r = lerFaturaInter(FATURA_INTER);
+  // Antes: sem achar o total, estimava 1.500 − 900 (o pagamento da fatura anterior) = 600.
+  assert.equal(r.total, 1500);
+  assert.equal(r.totalImpresso, true);
+  assert.deepEqual(r.avisos, []);
+  assert.equal(r.vencimento, '2026-10-15');
+  assert.equal(r.linhas.length, 6);
+  assert.equal(r.linhas.filter(l => l.descricao === 'PADARIA BOA').length, 2);
+  assert.equal(r.linhas.find(l => /PAGTO/.test(l.descricao)).valor, 900);
+  assert.equal(r.linhas.find(l => /NABU/.test(l.descricao)).descricao, 'NABU CASA - HA CLOUD');
+  const parcela = r.linhas.find(l => /LOJA X/.test(l.descricao));
+  assert.equal(parcela.data, '2026-09-19');
+  assert.equal(parcela.detalhe, 'Cartão final 2222 · parcela 8/10');
+});
+
+test('fatura do Inter: avisa quando o que li não bate com o total do cartão, e estima sem descontar o pagamento', async () => {
+  const { lerFaturaInter } = await import('../src/pdf.js');
+  const faltando = lerFaturaInter(FATURA_INTER.filter(l => !/ALUGUEL/.test(l)));
+  assert.equal(faltando.total, 1500);
+  assert.equal(faltando.avisos.length, 1);
+  assert.match(faltando.avisos[0], /Cartão final 2222: os lançamentos lidos somam R\$ 400,00, mas a fatura diz R\$ 1\.444,65/);
+
+  const semTotal = lerFaturaInter(['CARTÃO 1234****1111', '01 de set. 2026   LOJA A   -   R$ 100,00', '02 de set. 2026   LOJA B   -   R$ 50,00',
+    '03 de set. 2026   PAGAMENTO RECEBIDO   -   + R$ 900,00', '04 de set. 2026   ESTORNO LOJA A   -   + R$ 20,00']);
+  assert.equal(semTotal.totalImpresso, false);
+  assert.equal(semTotal.total, 130);
+
+  // "Total CARTÃO" de um cartão que não li: não soma só os outros nem diz que conferiu; vale o cabeçalho, com aviso.
+  const prefixado = lerFaturaInter(FATURA_INTER.map(l => l.startsWith('Total CARTÃO 1234****2222') ? `Pág. 2   ${l}` : l));
+  assert.equal(prefixado.total, 1500);
+  assert.equal(prefixado.conferido, false);
+  assert.match(prefixado.avisos.join(), /Cartão final 2222: não achei o total impresso/);
+
+  // Como o pdfjs ordena a 1ª página: o limite fica entre "Total da sua fatura" e o valor. Não pode virar o total.
+  const soResumo = lerFaturaInter(['Limite de crédito total', 'Total da sua fatura', 'R$ 5.000,00', 'R$ 1.500,00   Data de Vencimento', '15/10/2026',
+    'Despesas do mês   R$ 1.500,00', 'CARTÃO 1234****1111', '01 de set. 2026   LOJA A   -   R$ 1.500,00']);
+  assert.equal(soResumo.total, 1500);
 });

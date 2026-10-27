@@ -8,9 +8,9 @@ import { fileURLToPath } from 'node:url';
 import { abrirBanco, transacao, semearPessoas } from './db.js';
 import { decodificar, ehOfx, lerOfx, detectarDelimitador, lerCsvBruto, sugerirPerfil, aplicarPerfil, PRESETS } from './parsers.js';
 import { importar, registrarCarteira, aplicarRegrasSemCategoria, resumo } from './servico.js';
-import { escutarEvento, publicarResumo, publicarFaturas, dispararEvento, haDisponivel, listarNotificadores } from './ha.js';
+import { escutarEvento, publicarResumo, publicarFaturas, dispararEvento, haDisponivel, listarNotificadores, notificar } from './ha.js';
 import { iaDisponivel, estadoIa, sugerirCategorias, aceitarSugestoes, recusarSugestao, comentarMes, gerarTexto } from './ia.js';
-import { listarFaturas, resumoFaturas, conciliarFaturas } from './faturas.js';
+import { listarFaturas, resumoFaturas, conciliarFaturas, hojeLocal } from './faturas.js';
 import { verificarEmail, estadoEmail } from './email.js';
 
 const DEV = Boolean(process.env.FINANCAS_DEV);
@@ -48,18 +48,21 @@ await app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024, files: 1 }
 // Só o ingress do HA fala com o app (ele já exige login do HA).
 app.addHook('onRequest', async (req, reply) => {
   if (DEV) return;
-  if (req.ip !== '172.30.32.2' && req.ip !== '127.0.0.1' && req.ip !== '::1') reply.code(403).send({ erro: 'acesso só pelo Home Assistant' });
+  if (req.ip !== '172.30.32.2' && req.ip !== '127.0.0.1' && req.ip !== '::1') return reply.code(403).send({ erro: 'acesso só pelo Home Assistant' });
 });
 
-const mesAtual = () => new Date(Date.now() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 7);
+const mesAtual = () => hojeLocal().slice(0, 7);
 const quem = req => req.headers['x-remote-user-display-name'] || req.headers['x-remote-user-name'] || null;
 let publicando = null;
 const atualizarHa = () => {
   clearTimeout(publicando);
+  // Roda solto num timer: um erro aqui não pode derrubar o add-on.
   publicando = setTimeout(async () => {
-    conciliarFaturas(db);
-    await publicarResumo(resumo(db, mesAtual()), app.log);
-    await publicarFaturas(resumoFaturas(db), estadoEmail, app.log);
+    try {
+      conciliarFaturas(db);
+      await publicarResumo(resumo(db, mesAtual()), app.log);
+      await publicarFaturas(resumoFaturas(db), estadoEmail, app.log);
+    } catch (e) { app.log.error({ err: e.message }, 'falha ao atualizar o HA'); }
   }, 1500);
 };
 
@@ -68,7 +71,7 @@ async function ler(buf, nome) {
   // pdfjs só é carregado quando chega um PDF: se algo nele falhar, o resto do app segue de pé.
   if (buf.length > 4 && buf.subarray(0, 5).toString('latin1') === '%PDF-') {
     const { lerPdf } = await import('./pdf.js');
-    return { ...(await lerPdf(buf)), nome };
+    return { ...(await lerPdf(buf, { senhas: EMAIL.senhasPdf })), nome };
   }
   const txt = decodificar(buf);
   if (ehOfx(txt)) return { formato: 'ofx', linhas: lerOfx(txt), nome };
@@ -79,7 +82,7 @@ async function ler(buf, nome) {
 }
 
 function previa(arq, perfil) {
-  if (arq.formato !== 'csv') return { formato: arq.formato, linhas: arq.linhas, erros: arq.erros || [] };
+  if (arq.formato !== 'csv') return { formato: arq.formato, linhas: arq.linhas, erros: arq.erros || [], avisos: arq.avisos || [] };
   const r = aplicarPerfil(arq.bruto, perfil);
   return { formato: 'csv', ...r };
 }
@@ -91,21 +94,38 @@ setInterval(() => { for (const [k, v] of uploads) if (Date.now() - v.criado > 30
 app.get('/api/estado', async () => ({ pessoas: donos(), donos: donos(), ha: haDisponivel(), ia: iaDisponivel() ? IA.entidade : null, presets: PRESETS.map(p => ({ id: p.id, nome: p.nome })), pasta: PASTA, email: estadoEmail.configurado }));
 
 // ---------- faturas do e-mail ----------
-async function checarEmail() {
+async function checarEmail({ historico = false } = {}) {
   const r = await verificarEmail(db, EMAIL, {
-    ia: iaDisponivel() ? { ...IA, gerarTexto } : null, log: app.log,
+    ia: iaDisponivel() ? { ...IA, gerarTexto } : null, log: app.log, historico,
     aoMudar: f => {
-      dispararEvento('financas_fatura_nova', f, app.log);
+      // Na carga do histórico não tem fatura "nova": nada de evento nem aviso no celular para cada uma antiga.
+      if (!historico) { dispararEvento('financas_fatura_nova', f, app.log); avisarFatura(f); }
       if (f.importada) iaDepoisDeImportar();
     },
   });
   atualizarHa();
   return r;
 }
+// "Avisos no celular" do perfil: a fatura vai para o dono da conta do cartão, ou para todos se não tem conta.
+function avisarFatura(f) {
+  const destinos = f.conta_id
+    ? db.prepare('SELECT p.notificar FROM contas c JOIN pessoas p ON p.nome = c.dono WHERE c.id = ? AND p.notificar IS NOT NULL').all(f.conta_id)
+    : db.prepare('SELECT notificar FROM pessoas WHERE arquivada = 0 AND notificar IS NOT NULL').all();
+  const valor = f.valor != null ? `R$ ${f.valor.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+,)/g, '.')}` : 'valor ainda não lido';
+  const venc = f.vencimento ? ` · vence ${f.vencimento.slice(8, 10)}/${f.vencimento.slice(5, 7)}` : '';
+  for (const { notificar: s } of destinos) notificar(s, `Fatura ${f.banco}${f.cartao_final ? ` final ${f.cartao_final}` : ''}`, `${valor}${venc}`, app.log);
+}
 app.get('/api/faturas', async req => ({ email: { ...estadoEmail, usuario: EMAIL.usuario || null, servidor: EMAIL.servidor, intervaloMin: EMAIL.intervaloMin }, faturas: listarFaturas(db, { todas: req.query?.todas === '1' }) }));
 app.post('/api/faturas/verificar', async (req, reply) => {
   if (!estadoEmail.configurado) return reply.code(400).send({ erro: 'configure email_usuario e email_senha_de_app nas opções do add-on' });
   return checarEmail();
+});
+// Carga inicial: a caixa inteira. Demora; roda solta e a tela acompanha pelo estado (feitos/total).
+app.post('/api/faturas/historico', async (req, reply) => {
+  if (!estadoEmail.configurado) return reply.code(400).send({ erro: 'configure email_usuario e email_senha_de_app nas opções do add-on' });
+  if (estadoEmail.rodando) return reply.code(409).send({ erro: 'já estou lendo o e-mail; espere terminar' });
+  checarEmail({ historico: true }).catch(e => app.log.error({ err: e.message }, 'e-mail: carga do histórico falhou'));
+  return { ok: true };
 });
 app.patch('/api/faturas/:id', async (req, reply) => {
   const f = db.prepare('SELECT * FROM faturas WHERE id = ?').get(req.params.id);
@@ -115,8 +135,9 @@ app.patch('/api/faturas/:id', async (req, reply) => {
   const valor = b.valor === undefined ? f.valor : (b.valor === null || b.valor === '' ? null : Number(b.valor));
   const venc = b.vencimento === undefined ? f.vencimento : (b.vencimento || null);
   const conta = b.conta_id === undefined ? f.conta_id : (b.conta_id || null);
-  db.prepare('UPDATE faturas SET status = ?, valor = ?, vencimento = ?, conta_id = ?, paga_por = CASE WHEN ? = \'aberta\' THEN NULL ELSE paga_por END WHERE id = ?')
-    .run(status, valor, venc, conta, status, f.id);
+  const origem = valor === f.valor ? f.origem_valor : 'manual';
+  db.prepare('UPDATE faturas SET status = ?, valor = ?, origem_valor = ?, vencimento = ?, conta_id = ?, paga_por = CASE WHEN ? = \'aberta\' THEN NULL ELSE paga_por END WHERE id = ?')
+    .run(status, valor, origem, venc, conta, status, f.id);
   atualizarHa();
   return { ok: true };
 });
@@ -130,7 +151,10 @@ app.post('/api/faturas/:id/importar', async (req, reply) => {
     const { lerPdf } = await import('./pdf.js');
     const r = await lerPdf(readFileSync(f.pdf), { senhas: EMAIL.senhasPdf });
     const imp = importar(db, { contaId, linhas: r.linhas, arquivo: basename(f.pdf), formato: 'pdf', quem: quem(req) || 'e-mail' });
-    db.prepare('UPDATE faturas SET conta_id = ?, importacao_id = ?, erro = NULL WHERE id = ?').run(contaId, imp.importacaoId, f.id);
+    // O total impresso corrige valor que veio de estimativa do PDF, nunca uma correção feita à mão.
+    const novo = r.totalImpresso && (f.valor == null || f.origem_valor === 'pdf') ? r.total : f.valor;
+    db.prepare('UPDATE faturas SET conta_id = ?, importacao_id = ?, erro = ?, valor = ?, origem_valor = ? WHERE id = ?')
+      .run(contaId, imp.importacaoId, r.avisos?.length ? r.avisos.join('; ') : null, novo, novo === f.valor ? f.origem_valor : 'pdf', f.id);
     atualizarHa(); iaDepoisDeImportar();
     return imp;
   } catch (e) { return reply.code(400).send({ erro: e.message }); }
@@ -145,7 +169,8 @@ async function comentarAgora(mes) {
 }
 function iaDepoisDeImportar() {
   if (!iaDisponivel() || !IA.automatica) return;
-  sugerirCategorias(db, { ...IA, aoTerminar: () => { atualizarHa(); comentarAgora(mesAtual()).catch(e => app.log.warn({ err: e.message }, 'IA: comentário falhou')); } }, app.log);
+  sugerirCategorias(db, { ...IA, aoTerminar: () => { atualizarHa(); comentarAgora(mesAtual()).catch(e => app.log.warn({ err: e.message }, 'IA: comentário falhou')); } }, app.log)
+    .catch(e => app.log.error({ err: e.message }, 'IA: sugestão falhou'));
 }
 app.get('/api/ia/estado', async () => ({ disponivel: iaDisponivel(), entidade: IA.entidade, ...estadoIa }));
 app.post('/api/ia/sugerir', async (req, reply) => {
@@ -219,9 +244,9 @@ app.post('/api/contas', async (req, reply) => {
   return { id: Number(r.lastInsertRowid) };
 });
 
-app.patch('/api/contas/:id', async req => {
+app.patch('/api/contas/:id', async (req, reply) => {
   const c = db.prepare('SELECT * FROM contas WHERE id = ?').get(req.params.id);
-  if (!c) return { ok: false };
+  if (!c) return reply.code(404).send({ erro: 'conta não encontrada' });
   const b = req.body || {};
   db.prepare('UPDATE contas SET nome = ?, tipo = ?, dono = ?, banco = ?, arquivada = ? WHERE id = ?')
     .run(b.nome ?? c.nome, b.tipo ?? c.tipo, b.dono ?? c.dono, b.banco ?? c.banco, b.arquivada ?? c.arquivada, c.id);
@@ -238,8 +263,9 @@ app.post('/api/categorias', async (req, reply) => {
   const r = db.prepare('INSERT INTO categorias (nome, grupo, cor, fora_do_total) VALUES (?,?,?,?)').run(nome.trim(), grupo || null, cor || '#8089a7', fora_do_total ? 1 : 0);
   return { id: Number(r.lastInsertRowid) };
 });
-app.patch('/api/categorias/:id', async req => {
+app.patch('/api/categorias/:id', async (req, reply) => {
   const k = db.prepare('SELECT * FROM categorias WHERE id = ?').get(req.params.id);
+  if (!k) return reply.code(404).send({ erro: 'categoria não encontrada' });
   const b = req.body || {};
   db.prepare('UPDATE categorias SET nome = ?, grupo = ?, cor = ?, fora_do_total = ? WHERE id = ?')
     .run(b.nome ?? k.nome, b.grupo ?? k.grupo, b.cor ?? k.cor, (b.fora_do_total ?? k.fora_do_total) ? 1 : 0, k.id);
@@ -280,9 +306,9 @@ app.get('/api/lancamentos', async req => {
     ${where} ORDER BY l.data DESC, l.id DESC LIMIT 2000`).all(...args);
 });
 
-app.patch('/api/lancamentos/:id', async req => {
+app.patch('/api/lancamentos/:id', async (req, reply) => {
   const l = db.prepare('SELECT * FROM lancamentos WHERE id = ?').get(req.params.id);
-  if (!l) return { ok: false };
+  if (!l) return reply.code(404).send({ erro: 'lançamento não encontrado' });
   const b = req.body || {};
   db.prepare('UPDATE lancamentos SET categoria_id = ?, nota = ?, sugestao_categoria_id = NULL WHERE id = ?')
     .run(b.categoria_id === undefined ? l.categoria_id : b.categoria_id, b.nota ?? l.nota, l.id);
@@ -322,7 +348,8 @@ app.post('/api/importar/previa', async (req, reply) => {
     amostra = arq.bruto.slice(perfil.linhaCabecalho + 1, perfil.linhaCabecalho + 6);
   }
   const p = previa(arq, perfil);
-  return { token, formato: arq.formato, banco: arq.banco || null, nome: arq.nome, perfil, colunas, amostra, bruto: arq.formato === 'csv' ? arq.bruto.slice(0, 15) : [], ...resumoPrevia(p) };
+  return { token, formato: arq.formato, banco: arq.banco || null, nome: arq.nome, totalFatura: arq.total ?? null,
+    totalOrigem: arq.total == null ? null : !arq.totalImpresso ? 'estimado' : arq.conferido ? 'conferido' : 'impresso', perfil, colunas, amostra, bruto: arq.formato === 'csv' ? arq.bruto.slice(0, 15) : [], ...resumoPrevia(p) };
 });
 
 // Perfis salvos antes da v0.3 não têm a coluna de detalhe (ex.: Histórico do Inter).
@@ -343,7 +370,7 @@ function resumoPrevia(p) {
     entradas: p.linhas.filter(l => l.valor > 0).reduce((s, l) => s + l.valor, 0),
     de: datas[0] || null, ate: datas.at(-1) || null,
     exemplos: p.linhas.slice(0, 8),
-    erros: p.erros.slice(0, 10), nErros: p.erros.length,
+    erros: p.erros.slice(0, 10), nErros: p.erros.length, avisos: p.avisos || [],
   };
 }
 
@@ -351,6 +378,7 @@ app.post('/api/importar/reprevia', async (req, reply) => {
   const { token, perfil } = req.body || {};
   const u = uploads.get(token);
   if (!u) return reply.code(410).send({ erro: 'o upload expirou, envie o arquivo de novo' });
+  if (u.arq.formato === 'csv' && !perfil) return reply.code(400).send({ erro: 'falta o mapeamento das colunas' });
   const p = previa(u.arq, perfil);
   return { colunas: u.arq.bruto?.[perfil.linhaCabecalho] || [], amostra: u.arq.bruto?.slice(perfil.linhaCabecalho + 1, perfil.linhaCabecalho + 6) || [], ...resumoPrevia(p) };
 });
@@ -361,6 +389,7 @@ app.post('/api/importar/confirmar', async (req, reply) => {
   if (!u) return reply.code(410).send({ erro: 'o upload expirou, envie o arquivo de novo' });
   const conta = db.prepare('SELECT * FROM contas WHERE id = ?').get(contaId);
   if (!conta) return reply.code(400).send({ erro: 'escolha a conta' });
+  if (u.arq.formato === 'csv' && !perfil) return reply.code(400).send({ erro: 'falta o mapeamento das colunas' });
   const p = previa(u.arq, perfil);
   if (!p.linhas.length) return reply.code(400).send({ erro: 'nenhum lançamento reconhecido com esse mapeamento' });
   if (u.arq.formato === 'csv') {
@@ -388,6 +417,8 @@ app.delete('/api/importacoes/:id', async req => {
 
 app.get('/api/resumo', async req => resumo(db, req.query?.mes || mesAtual()));
 app.get('/api/carteira', async () => db.prepare('SELECT * FROM carteira ORDER BY quando DESC LIMIT 200').all());
+// Aviso que nunca vai bater com o extrato (lido errado, repetido): sai da conta do mês.
+app.delete('/api/carteira/:id', async req => { db.prepare('DELETE FROM carteira WHERE id = ?').run(req.params.id); atualizarHa(); return { ok: true }; });
 app.get('/api/meses', async () => db.prepare("SELECT DISTINCT substr(data,1,7) AS mes FROM lancamentos ORDER BY mes DESC").all().map(r => r.mes));
 
 // ---------- front ----------
@@ -406,8 +437,10 @@ setInterval(() => {
   const d = new Date(); if (d.getDate() > 3) return;
   const ant = new Date(d.getFullYear(), d.getMonth() - 1, 15);
   const mes = `${ant.getFullYear()}-${String(ant.getMonth() + 1).padStart(2, '0')}`;
-  if (db.prepare('SELECT 1 FROM comentarios WHERE mes = ?').get(mes)) return;
-  if (!db.prepare('SELECT 1 FROM lancamentos WHERE substr(data,1,7) = ? LIMIT 1').get(mes)) return;
+  try {
+    if (db.prepare('SELECT 1 FROM comentarios WHERE mes = ?').get(mes)) return;
+    if (!db.prepare('SELECT 1 FROM lancamentos WHERE substr(data,1,7) = ? LIMIT 1').get(mes)) return;
+  } catch (e) { app.log.error({ err: e.message }, 'IA: falha ao checar o comentário do mês'); return; }
   comentarAgora(mes).catch(e => app.log.warn({ err: e.message }, 'IA: comentário do mês falhou'));
 }, 60 * 6e4).unref();
 atualizarHa();

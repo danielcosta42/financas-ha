@@ -59,8 +59,9 @@ export async function publicarResumo(r, log) {
     comentario: r.comentario?.texto || null,
     recorrentes: (r.recorrentes || []).map(x => `${x.descricao} · R$ ${x.valor.toFixed(2).replace('.', ',')} x${x.vezes}`),
   }, log);
-  await publicarEstado('sensor.financas_entradas_do_mes', r.entradas.toFixed(2), {
+  await publicarEstado('sensor.financas_entradas_do_mes', (r.entradas + r.entradasPendentes.total).toFixed(2), {
     ...brl, icon: 'mdi:cash-plus', friendly_name: 'Finanças · entradas do mês', mes: r.mes,
+    pendentes: r.entradasPendentes.total, extratos: r.entradas,
   }, log);
   await publicarEstado('sensor.financas_sem_categoria', r.semCategoria, {
     friendly_name: 'Finanças · lançamentos sem categoria', icon: 'mdi:tag-off-outline', sugestoes_da_ia: r.sugestoes || 0,
@@ -71,6 +72,15 @@ export async function publicarResumo(r, log) {
     device_class: 'timestamp', friendly_name: 'Finanças · última importação', icon: 'mdi:file-upload-outline',
     contas_atrasadas: atrasadas,
   }, log);
+}
+
+// Aviso no celular pelo serviço notify do app do HA (ex.: mobile_app_iphone).
+export async function notificar(servico, title, message, log) {
+  if (!TOKEN || !servico) return;
+  try {
+    const r = await fetch(`${API}/services/notify/${servico}`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ title, message }) });
+    if (!r.ok) log?.warn({ servico, status: r.status }, 'falha ao avisar no celular');
+  } catch (e) { log?.warn({ err: e.message, servico }, 'falha ao avisar no celular'); }
 }
 
 export async function dispararEvento(tipo, dados, log) {

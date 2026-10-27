@@ -32,7 +32,7 @@ export function Categorias({ ctx }: { ctx: Ctx }) {
   const grupos = [...new Set(ctx.categorias.map(k => k.grupo || 'Outros'))];
   return (
     <>
-      <Cabecalho titulo="Categorias e regras" sub="Regras categorizam sozinhas tudo que entra. A mais específica (texto mais longo) ganha." />
+      <Cabecalho titulo="Categorias e regras" sub="Regras categorizam sozinhas tudo que entra. Ganha a que aparece primeiro na descrição; no empate, a de texto mais longo." />
       {aviso && <div className="banner ciano"><Icone nome="ok" /><div className="banner-txt"><b>{aviso}</b></div><button className="btn fantasma" onClick={() => setAviso(null)}>Ok</button></div>}
 
       <div className="grade-2">

@@ -4,3 +4,4 @@ financas/server/public/
 financas/server/.data/
 *.sqlite*
 .DS_Store
+*.tsbuildinfo

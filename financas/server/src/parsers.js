@@ -201,6 +201,10 @@ export function lerValor(s, decimal = 'auto') {
   return neg ? -n : n;
 }
 
+// Valor dito pela IA só vale se aparecer no texto com os centavos ("1.234,56" ou "1234,56"),
+// não só a parte inteira (que bate com ano, protocolo, qualquer número).
+export const valorNoTexto = (v, texto) => String(texto).replace(/\./g, '').includes(v.toFixed(2).replace('.', ','));
+
 export function aplicarPerfil(linhas, perfil) {
   const saida = [], erros = [];
   const corpo = linhas.slice((perfil.linhaCabecalho ?? 0) + 1);

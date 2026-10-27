@@ -66,7 +66,7 @@ export function Importar({ ctx }: { ctx: Ctx }) {
   const conta = contas.find(c => c.id === contaId);
   return (
     <>
-      <Cabecalho titulo="Importar extrato" sub="CSV ou OFX exportado do app ou do site do banco. Reimportar o mesmo período não duplica nada." />
+      <Cabecalho titulo="Importar extrato" sub="CSV ou OFX exportado do app ou do site do banco, ou a fatura do Inter em PDF. Reimportar o mesmo período não duplica nada." />
 
       {resultado && (
         <div className="banner ciano">
@@ -128,6 +128,12 @@ export function Importar({ ctx }: { ctx: Ctx }) {
               ))}
             </tbody>
           </table>
+          {previa.totalFatura != null && (
+            <p className="pequeno">Total da fatura: <b className="mono">{brl(previa.totalFatura)}</b>
+              <span className="mudo">{previa.totalOrigem === 'estimado' ? ' · estimado pelos lançamentos (a fatura não traz o total num formato que eu leia)'
+                : previa.totalOrigem === 'conferido' && !previa.avisos.length ? ' · confere com os lançamentos lidos de cada cartão' : ''}</span></p>
+          )}
+          {previa.avisos.map(a => <p key={a} className="txt-laranja pequeno">{a}</p>)}
           {previa.nErros > 0 && <p className="txt-laranja pequeno">{previa.nErros} linhas ignoradas (sem data ou valor), ex.: linha {previa.erros[0]?.linha}: {previa.erros[0]?.conteudo}</p>}
           <p className="mudo pequeno">Saídas devem aparecer negativas. Se estiver ao contrário (comum em CSV de cartão), marque “inverter sinal”.</p>
 
