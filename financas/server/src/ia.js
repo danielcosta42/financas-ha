@@ -9,6 +9,9 @@ const API = process.env.FINANCAS_HA_API || 'http://supervisor/core/api';
 
 export const iaDisponivel = () => Boolean(TOKEN);
 
+// Nomes vêm dos perfis cadastrados: nada pessoal fixo no código.
+const donosDaCasa = db => db.prepare("SELECT nome FROM pessoas WHERE tipo = 'pessoa' AND arquivada = 0 ORDER BY id").all().map(p => p.nome).join(', ') || 'os moradores';
+
 export async function gerarTexto(instrucoes, { entidade, reserva, tarefa = 'financas', timeoutMs = 120000 } = {}) {
   if (!TOKEN) throw new Error('sem acesso ao Home Assistant');
   const tentar = async entity_id => {
@@ -62,15 +65,16 @@ export async function sugerirCategorias(db, opcoes, log) {
     GROUP BY k.id, lower(substr(l.descricao, 1, 18)) ORDER BY max(l.data) DESC LIMIT 18`).all()
     .map(e => `- ${[e.detalhe, e.descricao.replace(/\s{2,}/g, ' ')].filter(Boolean).join(': ')} (${e.valor < 0 ? 'saída' : 'entrada'}) → ${e.categoria}`).join('\n');
   const marca = db.prepare('UPDATE lancamentos SET sugestao_categoria_id = ?, sugestao_de = ? WHERE id = ? AND categoria_id IS NULL');
+  const donos = donosDaCasa(db);
 
   (async () => {
     for (const g of lista) {
       const l = g.exemplo;
       const opcoesCat = l.valor < 0 ? deSaida : deEntrada;
       const desc = [l.detalhe, l.descricao.replace(/\s{2,}/g, ' ')].filter(Boolean).join(': ');
-      const instr = `Você categoriza lançamentos de extrato bancário de uma casa em São Paulo (Daniel e Naomi). `
+      const instr = `Você categoriza lançamentos de extrato bancário de uma casa (moradores: ${donos}). `
         + `Responda APENAS com o nome exato de uma categoria da lista, ou "?" se não der pra saber com segurança. `
-        + `Pix para pessoa física sem contexto: responda "?". Transferência entre contas é só quando o dinheiro vai para conta do próprio dono (Daniel Costa Ferreira Dutra).\n`
+        + `Pix para pessoa física sem contexto: responda "?". Transferência entre contas é só quando o dinheiro vai para outra conta de um dos moradores (o nome dele aparece na descrição).\n`
         + `Categorias: ${opcoesCat.map(c => c.nome).join(', ')}.\n`
         + (exemplos ? `Exemplos de como esta casa categoriza:\n${exemplos}\n` : '')
         + `Lançamento: ${desc} (${l.valor < 0 ? 'saída' : 'entrada'} de R$ ${Math.abs(l.valor).toFixed(2).replace('.', ',')})`;
@@ -93,7 +97,10 @@ export async function sugerirCategorias(db, opcoes, log) {
 
 // Aceita sugestões (todas ou alguns ids). Com criarRegras, vira regra o estabelecimento que aparece 2+ vezes.
 export function aceitarSugestoes(db, { ids, criarRegras = true } = {}) {
-  const onde = ids?.length ? `AND id IN (${ids.map(Number).join(',')})` : '';
+  // Sem ids = aceita todas; ids que não são números não podem virar "todas" por engano.
+  const lista = Array.isArray(ids) ? ids.map(Number).filter(Number.isInteger) : null;
+  if (lista && !lista.length) return { aceitos: 0, regras: 0 };
+  const onde = lista ? `AND id IN (${lista.join(',')})` : '';
   const itens = db.prepare(`SELECT id, descricao, sugestao_categoria_id AS cat FROM lancamentos
     WHERE categoria_id IS NULL AND sugestao_categoria_id IS NOT NULL ${onde}`).all();
   const up = db.prepare('UPDATE lancamentos SET categoria_id = sugestao_categoria_id, sugestao_categoria_id = NULL, sugestao_de = NULL WHERE id = ?');
@@ -142,7 +149,7 @@ export async function comentarMes(db, mes, opcoes) {
     r.semCategoria ? `${r.semCategoria} lançamentos ainda sem categoria.` : '',
     r.recorrentes.length ? `Cobranças repetidas nos últimos 90 dias: ${r.recorrentes.slice(0, 3).map(x => `${x.descricao} ${brl(x.valor)} x${x.vezes}`).join('; ')}.` : '',
   ].filter(Boolean).join(' ');
-  const instr = `Você é o assistente financeiro da casa do Daniel e da Naomi. Com base só nos fatos abaixo, escreva um comentário curto sobre o mês `
+  const instr = `Você é o assistente financeiro de uma casa (moradores: ${donosDaCasa(db)}). Com base só nos fatos abaixo, escreva um comentário curto sobre o mês `
     + `em português do Brasil: 2 ou 3 frases, tom direto e amigável, destacando o que mudou e uma sugestão prática. `
     + `Não invente números nem fatos. Sem emojis, sem listas, sem markdown. Fatos: ${fatos}`;
   const { texto, origem } = await gerarTexto(instr, { entidade: opcoes.entidade, reserva: opcoes.reserva, tarefa: 'financas_comentario' });

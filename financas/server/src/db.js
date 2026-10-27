@@ -137,11 +137,16 @@ export function abrirBanco(dir) {
 
 // v0.3: detalhe (ex.: "Pix enviado" no Inter), sugestão da IA e comentários do mês.
 function migrar(db) {
-  const cols = db.prepare('PRAGMA table_info(lancamentos)').all().map(c => c.name);
-  const add = (nome, tipo) => { if (!cols.includes(nome)) db.exec(`ALTER TABLE lancamentos ADD COLUMN ${nome} ${tipo}`); };
-  add('detalhe', 'TEXT');
-  add('sugestao_categoria_id', 'INTEGER REFERENCES categorias(id) ON DELETE SET NULL');
-  add('sugestao_de', 'TEXT');
+  const add = (tabela, nome, tipo) => {
+    if (!db.prepare(`PRAGMA table_info(${tabela})`).all().some(c => c.name === nome)) db.exec(`ALTER TABLE ${tabela} ADD COLUMN ${nome} ${tipo}`);
+  };
+  add('lancamentos', 'detalhe', 'TEXT');
+  add('lancamentos', 'sugestao_categoria_id', 'INTEGER REFERENCES categorias(id) ON DELETE SET NULL');
+  add('lancamentos', 'sugestao_de', 'TEXT');
+  // v0.5: avisos de transação por e-mail entram na carteira, inclusive entradas.
+  add('carteira', 'origem', "TEXT NOT NULL DEFAULT 'carteira'");
+  add('carteira', 'entrada', 'INTEGER NOT NULL DEFAULT 0');
+  add('carteira', 'banco', 'TEXT');
   db.exec(`CREATE TABLE IF NOT EXISTS comentarios (
     mes TEXT PRIMARY KEY,
     texto TEXT NOT NULL,
@@ -179,14 +184,13 @@ function migrar(db) {
 }
 
 const CORES = ['#7fb2ff', '#ff4fd8', '#4ff0c9', '#ffb86b', '#b18cff', '#ffe38a'];
-const NOTIFICAR_PADRAO = { Daniel: 'mobile_app_iphone_de_daniel', Naomi: 'mobile_app_naomi' };
 
 // Garante os perfis: os nomes das opções do add-on, Casa e Ferion, e qualquer dono de conta antigo.
 export function semearPessoas(db, nomes) {
   const ins = db.prepare('INSERT OR IGNORE INTO pessoas (nome, tipo, cor, notificar) VALUES (?,?,?,?)');
   const vazia = db.prepare('SELECT COUNT(*) AS n FROM pessoas').get().n === 0;
   if (vazia) {
-    nomes.forEach((n, i) => ins.run(n, 'pessoa', CORES[i % CORES.length], NOTIFICAR_PADRAO[n] || null));
+    nomes.forEach((n, i) => ins.run(n, 'pessoa', CORES[i % CORES.length], null));
     ins.run('Casa', 'casa', '#4ff0c9', null);
     ins.run('Ferion', 'empresa', '#ffb86b', null);
   }

@@ -36,8 +36,8 @@ export interface Regra { id: number; padrao: string; categoria_id: number; categ
 export interface Lancamento { id: number; data: string; descricao: string; detalhe: string | null; sugestao_categoria_id: number | null; sugestao: string | null; sugestao_cor: string | null; valor: number; categoria_id: number | null; categoria: string | null; cor: string | null; conta: string; conta_id: number; dono: string; nota: string | null; veio_da_carteira: number; fora_do_total: number }
 export interface LinhaPrevia { data: string; descricao: string; valor: number; id_externo: string | null }
 export interface Previa {
-  token: string; formato: 'csv' | 'ofx' | 'pdf'; banco?: string; nome: string; perfil: Perfil | null; colunas: string[]; amostra: string[][]; bruto: string[][];
-  total: number; saidas: number; entradas: number; de: string | null; ate: string | null; exemplos: LinhaPrevia[]; erros: { linha: number; conteudo: string }[]; nErros: number;
+  token: string; formato: 'csv' | 'ofx' | 'pdf'; banco?: string; nome: string; totalFatura: number | null; totalOrigem: 'conferido' | 'impresso' | 'estimado' | null; perfil: Perfil | null; colunas: string[]; amostra: string[][]; bruto: string[][];
+  total: number; saidas: number; entradas: number; de: string | null; ate: string | null; exemplos: LinhaPrevia[]; erros: { linha: number; conteudo: string }[]; nErros: number; avisos: string[];
 }
 export interface EstadoIa { disponivel: boolean; entidade: string; rodando: boolean; feitos: number; total: number; sugeridos: number; erro: string | null; fim: string | null }
 export interface Importacao { id: number; conta: string; dono: string; arquivo: string; formato: string; novos: number; duplicados: number; de: string; ate: string; quem: string | null; criado_em: string }
@@ -49,6 +49,7 @@ export interface Resumo {
   porDono: { dono: string; total: number; cor: string | null; renda_mensal: number | null; tipo: string | null }[];
   rendaDeclarada: number;
   carteiraPendente: { n: number; total: number };
+  entradasPendentes: { n: number; total: number };
   contas: { id: number; nome: string; dono: string; tipo: string; banco: string | null; ultima_importacao: string | null; ultimo_lancamento: string | null }[];
 }
 
@@ -61,8 +62,16 @@ export const nomeMes = (m: string) => { const t = new Date(`${m}-15T12:00:00`).t
 export const mesAnterior = (m: string, d = -1) => { const [y, mm] = m.split('-').map(Number); const t = new Date(y, mm - 1 + d, 15); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}`; };
 export interface Fatura {
   id: number; mensagem_id: string; banco: string | null; remetente: string | null; assunto: string | null; recebido_em: string | null;
-  valor: number | null; vencimento: string | null; cartao_final: string | null; origem_valor: 'regra' | 'pdf' | 'ia' | null;
+  valor: number | null; vencimento: string | null; cartao_final: string | null; origem_valor: 'regra' | 'pdf' | 'ia' | 'manual' | null;
   conta_id: number | null; conta: string | null; dono: string | null; importacao_id: number | null; pdf: string | null;
   status: 'aberta' | 'paga' | 'ignorada'; paga_por: number | null; erro: string | null; criado_em: string;
 }
-export interface EstadoEmail { configurado: boolean; rodando: boolean; ultima: string | null; erro: string | null; vistos: number; novas: number; usuario: string | null; servidor: string; intervaloMin: number }
+export interface EstadoEmail {
+  configurado: boolean; rodando: boolean; historico: boolean; ultima: string | null; erro: string | null; vistos: number; novas: number; transacoes: number;
+  feitos: number; total: number; usuario: string | null; servidor: string; intervaloMin: number;
+}
+// Pendente até o extrato chegar: compra da Carteira do iPhone ou aviso de transação do banco por e-mail.
+export interface ItemCarteira {
+  id: number; valor: number; entrada: number; loja: string | null; cartao: string | null; banco: string | null; quando: string;
+  origem: 'carteira' | 'email'; lancamento_id: number | null;
+}

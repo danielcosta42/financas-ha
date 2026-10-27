@@ -34,6 +34,7 @@ export function Resumo({ ctx }: { ctx: Ctx }) {
 
   const max = Math.max(1, ...r.porCategoria.map(c => c.total));
   const saidas = r.saidas + r.carteiraPendente.total;
+  const entradas = r.entradas + r.entradasPendentes.total;
   const atrasadas = r.contas.filter(c => { const d = diasDesde(c.ultima_importacao); return d === null || d > 8; });
 
   return (
@@ -60,9 +61,9 @@ export function Resumo({ ctx }: { ctx: Ctx }) {
       )}
 
       <section className="stats">
-        <Stat rotulo="Saídas" valor={brl(saidas)} tom="rosa" sub={r.carteiraPendente.n ? `inclui ${brl(r.carteiraPendente.total)} da Carteira ainda sem extrato` : `${r.n} lançamentos`} />
-        <Stat rotulo="Entradas" valor={brl(r.entradas)} tom="ciano" />
-        <Stat rotulo="Resultado" valor={brl(r.entradas - saidas)} tom={r.entradas - saidas >= 0 ? 'ciano' : 'vermelho'} sub={r.rendaDeclarada ? `renda declarada ${brl(r.rendaDeclarada)} · gastou ${Math.round((saidas / r.rendaDeclarada) * 100)}%` : undefined} />
+        <Stat rotulo="Saídas" valor={brl(saidas)} tom="rosa" sub={r.carteiraPendente.n ? `inclui ${brl(r.carteiraPendente.total)} avisados ainda sem extrato` : `${r.n} lançamentos`} />
+        <Stat rotulo="Entradas" valor={brl(entradas)} tom="ciano" sub={r.entradasPendentes.n ? `inclui ${brl(r.entradasPendentes.total)} avisados ainda sem extrato` : undefined} />
+        <Stat rotulo="Resultado" valor={brl(entradas - saidas)} tom={entradas - saidas >= 0 ? 'ciano' : 'vermelho'} sub={r.rendaDeclarada ? `renda declarada ${brl(r.rendaDeclarada)} · gastou ${Math.round((saidas / r.rendaDeclarada) * 100)}%` : undefined} />
         <button className={`stat clicavel ${r.semCategoria ? 'amarelo' : ''}`} onClick={() => ctx.ir('lancamentos', { categoria: 'sem' })}>
           <div className="stat-l">Sem categoria</div>
           <div className="stat-v mono">{r.semCategoria}</div>

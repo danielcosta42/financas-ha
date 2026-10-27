@@ -14,13 +14,14 @@ export function categorizar(db, descricao, detalhe = '') {
   return melhor ? melhor.categoria_id : null;
 }
 
-// Concilia compras da Carteira ainda soltas com lançamentos do extrato:
-// mesmo valor (saída) e data até 3 dias depois da compra.
-export function conciliarCarteira(db) {
-  const pend = db.prepare('SELECT * FROM carteira WHERE lancamento_id IS NULL').all();
+// Concilia o que está pendente na carteira (Carteira do iPhone, avisos por e-mail) com lançamentos do extrato:
+// mesmo valor e sentido, data de 1 dia antes até 3 dias depois. Com id, só aquele registro (a carga do
+// histórico insere milhares: conciliar todos a cada inserção seria quadrático).
+export function conciliarCarteira(db, id = null) {
+  const pend = id ? db.prepare('SELECT * FROM carteira WHERE id = ? AND lancamento_id IS NULL').all(id) : db.prepare('SELECT * FROM carteira WHERE lancamento_id IS NULL').all();
   const busca = db.prepare(`
     SELECT l.id FROM lancamentos l
-    WHERE l.origem = 'import' AND abs(l.valor + ?) < 0.005
+    WHERE l.origem = 'import' AND abs(l.valor - ?) < 0.005
       AND l.data BETWEEN date(?, '-1 day') AND date(?, '+3 day')
       AND l.id NOT IN (SELECT lancamento_id FROM carteira WHERE lancamento_id IS NOT NULL)
     ORDER BY abs(julianday(l.data) - julianday(?)) LIMIT 1`);
@@ -28,7 +29,7 @@ export function conciliarCarteira(db) {
   let n = 0;
   for (const c of pend) {
     const dia = c.quando.slice(0, 10);
-    const achou = busca.get(c.valor, dia, dia, dia);
+    const achou = busca.get(c.entrada ? c.valor : -c.valor, dia, dia, dia);
     if (achou) { marca.run(achou.id, c.id); n++; }
   }
   return n;
@@ -57,13 +58,21 @@ export function importar(db, { contaId, linhas, arquivo, formato, quem }) {
   });
 }
 
+// ev: { valor (positivo), loja, cartao, quando, entrada?, origem? ('carteira' | 'email'), banco? }
 export function registrarCarteira(db, ev) {
   const valor = Number(String(ev.valor ?? '').replace(',', '.'));
   if (!(valor > 0)) return null;
-  const r = db.prepare('INSERT INTO carteira (valor, loja, cartao, quando) VALUES (?,?,?,?)')
-    .run(valor, ev.loja || null, ev.cartao || null, ev.quando || new Date().toISOString());
-  conciliarCarteira(db);
-  return Number(r.lastInsertRowid);
+  const origem = ev.origem || 'carteira', entrada = ev.entrada ? 1 : 0, quando = ev.quando || new Date().toISOString();
+  // A mesma compra avisada por dois caminhos (Carteira do iPhone e e-mail, ou dois bancos: Mercado Pago e o
+  // cartão) entra uma vez só. Do mesmo caminho, valor igual no mesmo dia é compra repetida de verdade (dois cafés).
+  const repetida = db.prepare(`SELECT 1 FROM carteira WHERE (origem != ? OR COALESCE(banco, '') != ?) AND entrada = ? AND abs(valor - ?) < 0.005
+    AND abs(julianday(substr(quando,1,10)) - julianday(substr(?,1,10))) <= 1`).get(origem, ev.banco || '', entrada, valor, quando);
+  if (repetida) return null;
+  const r = db.prepare('INSERT INTO carteira (valor, loja, cartao, quando, origem, entrada, banco) VALUES (?,?,?,?,?,?,?)')
+    .run(valor, ev.loja || null, ev.cartao || null, quando, origem, entrada, ev.banco || null);
+  const id = Number(r.lastInsertRowid);
+  conciliarCarteira(db, id);
+  return id;
 }
 
 export function aplicarRegrasSemCategoria(db) {
@@ -89,15 +98,16 @@ export function resumo(db, mes) {
       AND l.valor < 0 GROUP BY c.dono ORDER BY total DESC`).all(ini, fim);
   const renda = db.prepare("SELECT COALESCE(SUM(renda_mensal),0) AS r FROM pessoas WHERE arquivada = 0 AND tipo = 'pessoa'").get().r;
   const semCategoria = db.prepare('SELECT COUNT(*) AS n FROM lancamentos WHERE categoria_id IS NULL').get().n;
-  const carteira = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(valor),0) AS total FROM carteira
-      WHERE lancamento_id IS NULL AND substr(quando,1,10) >= ? AND substr(quando,1,10) < ?`).get(ini, fim);
+  const pendentes = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(valor),0) AS total FROM carteira
+      WHERE lancamento_id IS NULL AND entrada = ? AND substr(quando,1,10) >= ? AND substr(quando,1,10) < ?`);
+  const carteira = pendentes.get(0, ini, fim), entradasPendentes = pendentes.get(1, ini, fim);
   const contas = db.prepare(`SELECT c.id, c.nome, c.dono, c.tipo, c.banco,
       (SELECT MAX(criado_em) FROM importacoes i WHERE i.conta_id = c.id) AS ultima_importacao,
       (SELECT MAX(data) FROM lancamentos x WHERE x.conta_id = c.id) AS ultimo_lancamento
       FROM contas c WHERE c.arquivada = 0 ORDER BY c.dono, c.nome`).all();
   const comentario = db.prepare('SELECT texto, origem, criado_em FROM comentarios WHERE mes = ?').get(mes) || null;
   const sugestoes = db.prepare('SELECT COUNT(*) AS n FROM lancamentos WHERE categoria_id IS NULL AND sugestao_categoria_id IS NOT NULL').get().n;
-  return { mes, ...tot, rendaDeclarada: renda, porCategoria, porDono, semCategoria, sugestoes, carteiraPendente: carteira, contas, comentario, recorrentes: recorrentes(db, fim) };
+  return { mes, ...tot, rendaDeclarada: renda, porCategoria, porDono, semCategoria, sugestoes, carteiraPendente: carteira, entradasPendentes, contas, comentario, recorrentes: recorrentes(db, fim) };
 }
 
 // Nome "limpo" do estabelecimento: tira cidade/país do fim e códigos.
